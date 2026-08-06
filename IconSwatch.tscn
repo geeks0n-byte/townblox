@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://IconSwatch.gd" id="1_icon"]
+
+[node name="IconSwatch" type="Control"]
+custom_minimum_size = Vector2(40, 40)
+texture_filter = 1
+script = ExtResource("1_icon")

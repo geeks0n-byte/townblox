@@ -1,0 +1,347 @@
+[gd_scene format=3 uid="uid://be4ly3oqx7bje"]
+
+[ext_resource type="Script" uid="uid://bth6qxwxvfxpn" path="res://Main.gd" id="1_w7hmd"]
+[ext_resource type="Script" uid="uid://cp6xvafdouwdv" path="res://Board.gd" id="2_board"]
+[ext_resource type="Script" path="res://InputBindings.gd" id="3_input_bindings"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_panel"]
+bg_color = Color(0.09, 0.1, 0.13, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.32, 0.35, 0.42, 1)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_right = 0
+corner_radius_bottom_left = 0
+content_margin_left = 2.0
+content_margin_top = 2.0
+content_margin_right = 2.0
+content_margin_bottom = 2.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_button_normal"]
+bg_color = Color(0.14, 0.15, 0.19, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.4, 0.44, 0.52, 1)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_right = 0
+corner_radius_bottom_left = 0
+content_margin_left = 10.0
+content_margin_top = 6.0
+content_margin_right = 10.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_button_hover"]
+bg_color = Color(0.18, 0.2, 0.26, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.95, 0.82, 0.35, 1)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_right = 0
+corner_radius_bottom_left = 0
+content_margin_left = 10.0
+content_margin_top = 6.0
+content_margin_right = 10.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_button_pressed"]
+bg_color = Color(0.1, 0.11, 0.14, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.7, 0.6, 0.25, 1)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_right = 0
+corner_radius_bottom_left = 0
+content_margin_left = 10.0
+content_margin_top = 6.0
+content_margin_right = 10.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_button_disabled"]
+bg_color = Color(0.1, 0.1, 0.12, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.25, 0.26, 0.3, 1)
+corner_radius_top_left = 0
+corner_radius_top_right = 0
+corner_radius_bottom_right = 0
+corner_radius_bottom_left = 0
+content_margin_left = 10.0
+content_margin_top = 6.0
+content_margin_right = 10.0
+content_margin_bottom = 6.0
+
+[node name="Main" type="Control" unique_id=644629132]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_w7hmd")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.05, 0.06, 0.08, 1)
+
+[node name="InputBindings" type="Node" parent="."]
+script = ExtResource("3_input_bindings")
+
+[node name="Layout" type="VBoxContainer" parent="." unique_id=1053701219]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = -4.0
+offset_bottom = -4.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="TopBar" type="HBoxContainer" parent="Layout" unique_id=231217658]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PromptLabel" type="Label" parent="Layout/TopBar" unique_id=2030633232]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.92, 0.94, 0.98, 1)
+theme_override_font_sizes/font_size = 14
+text = "LMB drag buildings · RMB erase · R rotate · Ctrl+Z undo · Ctrl+Y redo"
+autowrap_mode = 3
+
+[node name="UndoButton" type="Button" parent="Layout/TopBar" unique_id=724586019]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBox_button_normal")
+theme_override_styles/hover = SubResource("StyleBox_button_hover")
+theme_override_styles/pressed = SubResource("StyleBox_button_pressed")
+theme_override_styles/disabled = SubResource("StyleBox_button_disabled")
+text = "Undo"
+
+[node name="RedoButton" type="Button" parent="Layout/TopBar" unique_id=1342949987]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBox_button_normal")
+theme_override_styles/hover = SubResource("StyleBox_button_hover")
+theme_override_styles/pressed = SubResource("StyleBox_button_pressed")
+theme_override_styles/disabled = SubResource("StyleBox_button_disabled")
+text = "Redo"
+
+[node name="ClearButton" type="Button" parent="Layout/TopBar" unique_id=31944242]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBox_button_normal")
+theme_override_styles/hover = SubResource("StyleBox_button_hover")
+theme_override_styles/pressed = SubResource("StyleBox_button_pressed")
+theme_override_styles/disabled = SubResource("StyleBox_button_disabled")
+text = "Clear"
+
+[node name="NewShapeButton" type="Button" parent="Layout/TopBar" unique_id=224272460]
+custom_minimum_size = Vector2(140, 0)
+layout_mode = 2
+theme_override_styles/normal = SubResource("StyleBox_button_normal")
+theme_override_styles/hover = SubResource("StyleBox_button_hover")
+theme_override_styles/pressed = SubResource("StyleBox_button_pressed")
+theme_override_styles/disabled = SubResource("StyleBox_button_disabled")
+text = "New Shape"
+
+[node name="StatusRow" type="HBoxContainer" parent="Layout"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="CitizenStatus" type="HBoxContainer" parent="Layout/StatusRow"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="MoodIcon" type="TextureRect" parent="Layout/StatusRow/CitizenStatus"]
+custom_minimum_size = Vector2(22, 22)
+layout_mode = 2
+size_flags_vertical = 4
+texture_filter = 1
+expand_mode = 1
+stretch_mode = 5
+
+[node name="CitizenCountLabel" type="Label" parent="Layout/StatusRow/CitizenStatus"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.92, 0.94, 0.98, 1)
+theme_override_font_sizes/font_size = 13
+text = "Citizens  0"
+
+[node name="MoodSep" type="Label" parent="Layout/StatusRow/CitizenStatus"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.45, 0.48, 0.55, 1)
+theme_override_font_sizes/font_size = 13
+text = "·"
+
+[node name="CitizenMoodLabel" type="Label" parent="Layout/StatusRow/CitizenStatus"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.76, 0.82, 1)
+theme_override_font_sizes/font_size = 13
+text = "Quiet"
+
+[node name="ClockSep" type="Label" parent="Layout/StatusRow/CitizenStatus"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.45, 0.48, 0.55, 1)
+theme_override_font_sizes/font_size = 13
+text = "·"
+
+[node name="DayClockLabel" type="Label" parent="Layout/StatusRow/CitizenStatus"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.86, 0.55, 1)
+theme_override_font_sizes/font_size = 13
+text = "Day  07:40"
+
+[node name="ChatterLabel" type="Label" parent="Layout/StatusRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.85, 0.9, 0.75, 1)
+theme_override_font_sizes/font_size = 12
+text = "Town is quiet…"
+autowrap_mode = 3
+
+[node name="Middle" type="HBoxContainer" parent="Layout" unique_id=1172665654]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="BoardFrame" type="PanelContainer" parent="Layout/Middle"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 4.0
+theme_override_styles/panel = SubResource("StyleBox_panel")
+
+[node name="Board" type="Control" parent="Layout/Middle/BoardFrame" unique_id=1822118794]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("2_board")
+
+[node name="SidePanel" type="PanelContainer" parent="Layout/Middle" unique_id=813056078]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+size_flags_stretch_ratio = 1.0
+theme_override_styles/panel = SubResource("StyleBox_panel")
+
+[node name="Margin" type="MarginContainer" parent="Layout/Middle/SidePanel" unique_id=46069513]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="SideVBox" type="VBoxContainer" parent="Layout/Middle/SidePanel/Margin" unique_id=916155738]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="RecipesTitle" type="Label" parent="Layout/Middle/SidePanel/Margin/SideVBox" unique_id=1781867192]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.82, 0.35, 1)
+theme_override_font_sizes/font_size = 15
+text = "Overlap Recipes"
+
+[node name="RecipeScroll" type="ScrollContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="RecipeList" type="VBoxContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox/RecipeScroll" unique_id=178544087]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="TerrainTitle" type="Label" parent="Layout/Middle/SidePanel/Margin/SideVBox" unique_id=517042308]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.82, 0.35, 1)
+theme_override_font_sizes/font_size = 15
+text = "Terrain Features"
+
+[node name="TerrainScroll" type="ScrollContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox"]
+custom_minimum_size = Vector2(0, 72)
+layout_mode = 2
+horizontal_scroll_mode = 0
+
+[node name="TerrainList" type="VBoxContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox/TerrainScroll" unique_id=210690311]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="HazardsTitle" type="Label" parent="Layout/Middle/SidePanel/Margin/SideVBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.82, 0.35, 1)
+theme_override_font_sizes/font_size = 15
+text = "Hazard Bans"
+
+[node name="HazardScroll" type="ScrollContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox"]
+custom_minimum_size = Vector2(0, 88)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="HazardList" type="VBoxContainer" parent="Layout/Middle/SidePanel/Margin/SideVBox/HazardScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="BottomBar" type="PanelContainer" parent="Layout" unique_id=376786148]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBox_panel")
+
+[node name="BottomMargin" type="MarginContainer" parent="Layout/BottomBar" unique_id=302657796]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 4
+
+[node name="BottomVBox" type="VBoxContainer" parent="Layout/BottomBar/BottomMargin" unique_id=427603547]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="BottomTitle" type="Label" parent="Layout/BottomBar/BottomMargin/BottomVBox" unique_id=164387284]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.82, 0.35, 1)
+theme_override_font_sizes/font_size = 14
+text = "Buildings  ·  drag onto board  ·  R to rotate"
+
+[node name="PaletteScroll" type="ScrollContainer" parent="Layout/BottomBar/BottomMargin/BottomVBox" unique_id=1713460723]
+layout_mode = 2
+size_flags_vertical = 3
+vertical_scroll_mode = 0
+
+[node name="PaletteList" type="HBoxContainer" parent="Layout/BottomBar/BottomMargin/BottomVBox/PaletteScroll" unique_id=1858598016]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[connection signal="pressed" from="Layout/TopBar/UndoButton" to="." method="_on_undo_pressed"]
+[connection signal="pressed" from="Layout/TopBar/RedoButton" to="." method="_on_redo_pressed"]
+[connection signal="pressed" from="Layout/TopBar/ClearButton" to="." method="_on_clear_pressed"]
+[connection signal="pressed" from="Layout/TopBar/NewShapeButton" to="." method="_on_new_shape_pressed"]
+[connection signal="history_changed" from="Layout/Middle/BoardFrame/Board" to="." method="_on_history_changed"]
+[connection signal="town_chatter" from="Layout/Middle/BoardFrame/Board" to="." method="_on_town_chatter"]
+[connection signal="day_phase_changed" from="Layout/Middle/BoardFrame/Board" to="." method="_on_day_phase_changed"]
