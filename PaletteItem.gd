@@ -25,9 +25,9 @@ func setup(type_value: int, type_label: String, type_color: Color, footprint: Ve
 	building_type = type_value
 	custom_minimum_size = TILE_SIZE
 	size = TILE_SIZE
-	var outer_radius := mini(footprint.x, footprint.y)
 	swatch.setup_building(type_value, type_color)
 	name_label.text = type_label
+	var outer_radius := mini(footprint.x, footprint.y)
 	size_label.text = "%dx%d · o%d" % [footprint.x, footprint.y, outer_radius]
 	var rule_text := Board.placement_rule_text(type_value as Board.BuildingType)
 	tooltip_text = type_label if rule_text.is_empty() else "%s\n%s" % [type_label, rule_text]
@@ -42,7 +42,7 @@ func set_selected(selected: bool) -> void:
 
 
 func _get_drag_data(_at_position: Vector2) -> Variant:
-	Board.active_drag_rotated = false
+	Board.active_brush_rotated = false
 
 	var preview := PanelContainer.new()
 	var preview_style := StyleBoxFlat.new()

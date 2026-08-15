@@ -22,6 +22,9 @@ const ACTION_PAN_LEFT := "tb_pan_left"
 const ACTION_PAN_RIGHT := "tb_pan_right"
 const ACTION_PAN_UP := "tb_pan_up"
 const ACTION_PAN_DOWN := "tb_pan_down"
+const ACTION_VIEW_CCW := "tb_view_ccw"
+const ACTION_VIEW_CW := "tb_view_cw"
+const ACTION_META := "tb_meta" ## Back / Create — chord modifier for undo/redo
 
 enum PadProfile {
 	XBOX,
@@ -105,9 +108,10 @@ func _ensure_actions() -> void:
 		ACTION_MOVE_LEFT, ACTION_MOVE_RIGHT, ACTION_MOVE_UP, ACTION_MOVE_DOWN,
 		ACTION_PLACE, ACTION_ERASE, ACTION_ROTATE,
 		ACTION_PREV_BUILDING, ACTION_NEXT_BUILDING,
-		ACTION_CLEAR, ACTION_NEW_SHAPE, ACTION_UNDO, ACTION_REDO,
+		ACTION_CLEAR, ACTION_NEW_SHAPE, ACTION_UNDO, ACTION_REDO, ACTION_META,
 		ACTION_ZOOM_IN, ACTION_ZOOM_OUT,
 		ACTION_PAN_LEFT, ACTION_PAN_RIGHT, ACTION_PAN_UP, ACTION_PAN_DOWN,
+		ACTION_VIEW_CCW, ACTION_VIEW_CW,
 	]:
 		if not InputMap.has_action(action):
 			InputMap.add_action(action, 0.35)
@@ -121,6 +125,7 @@ func _clear_joy_events_from_actions() -> void:
 		ACTION_CLEAR, ACTION_NEW_SHAPE,
 		ACTION_ZOOM_IN, ACTION_ZOOM_OUT,
 		ACTION_PAN_LEFT, ACTION_PAN_RIGHT, ACTION_PAN_UP, ACTION_PAN_DOWN,
+		ACTION_VIEW_CCW, ACTION_VIEW_CW,
 	]:
 		for event in InputMap.action_get_events(action):
 			if event is InputEventJoypadButton or event is InputEventJoypadMotion:
@@ -149,6 +154,10 @@ func _bind_keyboard() -> void:
 	_add_key(ACTION_ZOOM_IN, KEY_KP_ADD)
 	_add_key(ACTION_ZOOM_OUT, KEY_MINUS)
 	_add_key(ACTION_ZOOM_OUT, KEY_KP_SUBTRACT)
+	_add_key(ACTION_VIEW_CCW, KEY_BRACKETLEFT)
+	_add_key(ACTION_VIEW_CCW, KEY_COMMA)
+	_add_key(ACTION_VIEW_CW, KEY_BRACKETRIGHT)
+	_add_key(ACTION_VIEW_CW, KEY_PERIOD)
 
 
 func _bind_shared_gamepad() -> void:
@@ -178,7 +187,11 @@ func _bind_shared_gamepad() -> void:
 	_add_joy_button(ACTION_PREV_BUILDING, JOY_BUTTON_LEFT_SHOULDER)
 	_add_joy_button(ACTION_NEXT_BUILDING, JOY_BUTTON_RIGHT_SHOULDER)
 	_add_joy_button(ACTION_CLEAR, JOY_BUTTON_BACK)
+	_add_joy_button(ACTION_META, JOY_BUTTON_BACK)
 	_add_joy_button(ACTION_NEW_SHAPE, JOY_BUTTON_START)
+	# Stick clicks orbit the Beat Cop camera by 90°.
+	_add_joy_button(ACTION_VIEW_CCW, JOY_BUTTON_LEFT_STICK)
+	_add_joy_button(ACTION_VIEW_CW, JOY_BUTTON_RIGHT_STICK)
 
 
 func _bind_xbox_face_buttons() -> void:
@@ -196,6 +209,21 @@ func _bind_sony_face_buttons() -> void:
 func _add_key(action: String, keycode: Key) -> void:
 	var event := InputEventKey.new()
 	event.physical_keycode = keycode
+	_add_event_unique(action, event)
+
+
+func _add_key_ctrl(action: String, keycode: Key) -> void:
+	var event := InputEventKey.new()
+	event.physical_keycode = keycode
+	event.ctrl_pressed = true
+	_add_event_unique(action, event)
+
+
+func _add_key_ctrl_shift(action: String, keycode: Key) -> void:
+	var event := InputEventKey.new()
+	event.physical_keycode = keycode
+	event.ctrl_pressed = true
+	event.shift_pressed = true
 	_add_event_unique(action, event)
 
 
@@ -217,7 +245,13 @@ func _add_event_unique(action: String, event: InputEvent) -> void:
 		if existing == null:
 			continue
 		if existing is InputEventKey and event is InputEventKey:
-			if (existing as InputEventKey).physical_keycode == (event as InputEventKey).physical_keycode:
+			var ek := existing as InputEventKey
+			var nk := event as InputEventKey
+			if (
+				ek.physical_keycode == nk.physical_keycode
+				and ek.ctrl_pressed == nk.ctrl_pressed
+				and ek.shift_pressed == nk.shift_pressed
+			):
 				return
 		elif existing is InputEventJoypadButton and event is InputEventJoypadButton:
 			if (existing as InputEventJoypadButton).button_index == (event as InputEventJoypadButton).button_index:

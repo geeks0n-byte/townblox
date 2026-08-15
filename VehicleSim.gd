@@ -27,31 +27,65 @@ func clear() -> void:
 	vehicles.clear()
 
 
-func tick(delta: float) -> void:
+func tick(delta: float) -> bool:
 	if board == null:
-		return
+		return false
+	var changed := false
 	_chatter_cooldown = maxf(0.0, _chatter_cooldown - delta)
+	var before := vehicles.size()
 	_cull_orphans()
+	if vehicles.size() != before:
+		changed = true
+	var count_before := vehicles.size()
 	_maybe_spawn()
+	if vehicles.size() != count_before:
+		changed = true
 
-	# Night traffic thins out; dawn/dusk stay busy.
 	var night := board.is_night()
 	for vehicle in vehicles:
+		var kind := int(vehicle["kind"])
+		var cps := 1.0 / _step_interval(kind)
+		if _update_visual(vehicle, delta, cps):
+			changed = true
+
+		var visual: Vector2 = vehicle.get("visual", Vector2(vehicle["cell"]))
+		var at_cell := visual.distance_to(Vector2(vehicle["cell"])) < 0.04
+		if not at_cell:
+			continue
+
 		vehicle["step_timer"] = float(vehicle.get("step_timer", 0.0)) - delta
 		if float(vehicle["step_timer"]) > 0.0:
 			continue
 		if night and _rng.randf() < 0.45:
 			vehicle["step_timer"] = 0.4
+			vehicle["walk_frame"] = 0
 			continue
-		vehicle["step_timer"] = _step_interval(int(vehicle["kind"])) * _rng.randf_range(0.85, 1.15)
+		vehicle["step_timer"] = _step_interval(kind) * _rng.randf_range(0.85, 1.15)
 		_step_vehicle(vehicle)
-		vehicle["walk_frame"] = (int(vehicle.get("walk_frame", 0)) + 1) % TileLibrary.WALK_FRAMES
 
 	var i := vehicles.size() - 1
 	while i >= 0:
 		if bool(vehicles[i].get("remove", false)):
 			vehicles.remove_at(i)
+			changed = true
 		i -= 1
+	return changed
+
+
+func _update_visual(actor: Dictionary, delta: float, cells_per_sec: float) -> bool:
+	var target := Vector2(actor["cell"])
+	var visual: Vector2 = actor.get("visual", target)
+	if visual.distance_to(target) < 0.001:
+		actor["visual"] = target
+		return false
+	var prev := visual
+	actor["visual"] = visual.move_toward(target, cells_per_sec * delta)
+	var moved := prev.distance_to(actor["visual"])
+	actor["walk_accum"] = float(actor.get("walk_accum", 0.0)) + moved
+	if float(actor["walk_accum"]) >= 0.14:
+		actor["walk_accum"] = 0.0
+		actor["walk_frame"] = (int(actor.get("walk_frame", 0)) + 1) % TileLibrary.WALK_FRAMES
+	return true
 
 
 func on_town_changed(_cell: Vector2i, building_type: Board.BuildingType, placed: bool) -> void:
@@ -94,7 +128,7 @@ func _maybe_spawn(force: bool = false) -> void:
 	var road_count := _count_roads()
 	if road_count < 3:
 		return
-	var capacity := mini(MAX_VEHICLES, 2 + int(road_count / 6.0))
+	var capacity := mini(MAX_VEHICLES, 2 + int(road_count / 18.0))
 	if vehicles.size() >= capacity:
 		return
 	if not force and _rng.randf() > (0.12 if not board.is_night() else 0.03):
@@ -105,11 +139,17 @@ func _maybe_spawn(force: bool = false) -> void:
 	if _occupied(start):
 		return
 	var kind := _pick_kind()
+	var paints: Array[Color] = [
+		Color("e07060"), Color("5a8ac8"), Color("e8dcc8"), Color("4a4e56"), Color("e0a040"), Color("6a9a6a")
+	]
 	vehicles.append({
 		"cell": start,
+		"visual": Vector2(start),
+		"walk_accum": 0.0,
 		"target": _pick_road_destination(start),
 		"dir": 0,
 		"kind": kind,
+		"paint": paints[_rng.randi_range(0, paints.size() - 1)],
 		"walk_frame": 0,
 		"step_timer": _rng.randf_range(0.05, 0.4),
 		"remove": false,
@@ -134,11 +174,11 @@ func _pick_kind() -> int:
 	return TileLibrary.VehicleKind.CAR
 
 
-func _step_vehicle(vehicle: Dictionary) -> void:
+func _step_vehicle(vehicle: Dictionary) -> bool:
 	var cell: Vector2i = vehicle["cell"]
 	if not _is_road(cell):
 		vehicle["remove"] = true
-		return
+		return false
 	var target: Vector2i = vehicle["target"]
 	if target == cell or not _is_road(target) or _rng.randf() < 0.08:
 		target = _pick_road_destination(cell)
@@ -159,7 +199,7 @@ func _step_vehicle(vehicle: Dictionary) -> void:
 			continue
 		vehicle["cell"] = next
 		vehicle["dir"] = _dir_from_delta(delta)
-		return
+		return true
 
 	# Wander along any open road edge.
 	var neighbors: Array[Vector2i] = [
@@ -171,7 +211,8 @@ func _step_vehicle(vehicle: Dictionary) -> void:
 		if _is_road(next) and not _occupied(next, vehicle):
 			vehicle["cell"] = next
 			vehicle["dir"] = _dir_from_delta(delta)
-			return
+			return true
+	return false
 
 
 func _pick_road_destination(from: Vector2i) -> Vector2i:
@@ -224,6 +265,11 @@ func _occupied(cell: Vector2i, except: Dictionary = {}) -> bool:
 			continue
 		if vehicle["cell"] == cell:
 			return true
+	# Yield to pedestrians so traffic shares the street with NPCs.
+	if board.citizen_sim != null:
+		for citizen in board.citizen_sim.citizens:
+			if citizen["cell"] == cell:
+				return true
 	return false
 
 

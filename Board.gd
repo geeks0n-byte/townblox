@@ -28,35 +28,40 @@ enum TerrainType {
 	RUINS,
 }
 
+## Continuous height field (0..1). Water/mountains are derived from thresholds.
+const ELEV_WATER := 0.34
+const ELEV_MOUNTAIN := 0.68
+## World-space Y scale for elevation above the water line.
+const ELEV_WORLD_SCALE := 3.2
+
 const GRID_WIDTH := 48
 const GRID_HEIGHT := 28
-const TILE_PX := 16.0
+const TILE_PX := 32.0
 const MAX_HISTORY := 64
-const TILE_ANIM_INTERVAL := 1.0 / TileLibrary.ANIM_FPS
+const TILE_ANIM_INTERVAL := 1.0 / 30.0 ## Smooth redraw cadence for water crossfades.
 ## Pitch camera down only (no left/right tilt): foreshorten ground rows.
 ## Actual foreshortening may relax toward 1.0 so the map fills leftover vertical space.
-const VIEW_Y_SCALE := 0.58
+const VIEW_Y_SCALE := 0.64
 ## Buildings/tall terrain stand up against the foreshortened ground.
-const ELEVATION_HEIGHT := 1.35
-const TERRAIN_ELEVATION := 1.05
+## Facades use 32×64 sheets (aspect ~2) so height stays near 2 cells.
+const ELEVATION_HEIGHT := 2.15
+const TERRAIN_ELEVATION := 1.35
 const ZOOM_MIN := 1.0
-const ZOOM_MAX := 4.0
+const ZOOM_MAX := 5.0
 const ZOOM_STEP := 1.12
-const DOF_ZOOM_START := 1.25
-const ANIM_FRAME_MODULO := 8
+const DOF_ZOOM_START := 1.35
+const ANIM_FRAME_MODULO := 16
 
-## Street-level actor sizes as fractions of cell width (shared baseline at cell bottom).
-## Tuned so NPCs, cars, and facades read together when zoomed in (Beat Cop-ish).
-const NPC_W := 0.42
-const NPC_H := 0.82
-const CAR_W := 0.84
-const CAR_H := 0.52
-const BIKE_W := 0.56
-const BIKE_H := 0.50
-const BUS_W := 0.96
-const BUS_H := 0.60
-const EMOTE_W := 0.36
-
+## Actor sizes as fractions of ONE cell — chunky Beat Cop street cast.
+const NPC_W := 0.28
+const NPC_H := 0.48
+const CAR_W := 0.62
+const CAR_H := 0.40
+const BIKE_W := 0.32
+const BIKE_H := 0.42
+const BUS_W := 0.82
+const BUS_H := 0.46
+const EMOTE_W := 0.22
 const TERRAIN_COLORS := {
 	TerrainType.OPEN: Color("1f2230"),
 	TerrainType.WATER: Color("2a6f9e"),
@@ -122,22 +127,23 @@ const OUTER_SINGLE_COLORS := {
 }
 
 const BUILDING_FOOTPRINTS := {
-	BuildingType.PARK: Vector2i(2, 2),
-	BuildingType.FACTORY: Vector2i(3, 2),
+	# 1×1 brush cells; adjacent same-type cells merge into one building_id.
+	BuildingType.PARK: Vector2i(1, 1),
+	BuildingType.FACTORY: Vector2i(1, 1),
 	BuildingType.ROAD: Vector2i(1, 1),
-	BuildingType.OFFICE: Vector2i(2, 2),
-	BuildingType.SKYSCRAPER: Vector2i(2, 3),
-	BuildingType.DOWNTOWN: Vector2i(3, 3),
-	BuildingType.SHOPS: Vector2i(2, 1),
-	BuildingType.RESIDENTIAL: Vector2i(2, 2),
-	BuildingType.SCHOOL: Vector2i(2, 2),
-	BuildingType.HOSPITAL: Vector2i(3, 2),
-	BuildingType.FARM: Vector2i(3, 2),
-	BuildingType.HARBOR: Vector2i(3, 2),
-	BuildingType.STADIUM: Vector2i(3, 3),
-	BuildingType.WAREHOUSE: Vector2i(3, 2),
-	BuildingType.HOTEL: Vector2i(2, 2),
-	BuildingType.MARKET: Vector2i(2, 1),
+	BuildingType.OFFICE: Vector2i(1, 1),
+	BuildingType.SKYSCRAPER: Vector2i(1, 1),
+	BuildingType.DOWNTOWN: Vector2i(1, 1),
+	BuildingType.SHOPS: Vector2i(1, 1),
+	BuildingType.RESIDENTIAL: Vector2i(1, 1),
+	BuildingType.SCHOOL: Vector2i(1, 1),
+	BuildingType.HOSPITAL: Vector2i(1, 1),
+	BuildingType.FARM: Vector2i(1, 1),
+	BuildingType.HARBOR: Vector2i(1, 1),
+	BuildingType.STADIUM: Vector2i(1, 1),
+	BuildingType.WAREHOUSE: Vector2i(1, 1),
+	BuildingType.HOTEL: Vector2i(1, 1),
+	BuildingType.MARKET: Vector2i(1, 1),
 }
 
 const PLACEABLE_TYPES: Array[BuildingType] = [
@@ -247,8 +253,8 @@ const HAZARD_PAIRS: Array[Dictionary] = [
 	},
 ]
 
-## Shared during an active palette drag so R can rotate before drop.
-static var active_drag_rotated := false
+## Shared brush rotation (R toggles while painting / hovering).
+static var active_brush_rotated := false
 
 const OVERLAP_RECIPES: Array[Dictionary] = [
 	# Existing
@@ -503,6 +509,7 @@ var inner_cells: Array = []
 var building_ids: Array = []
 var land_mask: Array = []
 var terrain_cells: Array = []
+var elevation_cells: Array = [] ## float 0..1 per cell
 var building_radii: Dictionary = {}
 var outer_influences: Array = []
 var terrain_influences: Array = []
@@ -513,13 +520,17 @@ var ghost_type: BuildingType = BuildingType.NONE
 var ghost_rotated := false
 var ghost_valid := false
 var is_drag_erasing := false
+var is_brush_painting := false
 var erase_stroke_started := false
+var paint_stroke_started := false
 var last_erase_cell: Vector2i = Vector2i(-999, -999)
+var last_paint_cell: Vector2i = Vector2i(-999, -999)
 var undo_stack: Array = []
 var redo_stack: Array = []
 var hover_info_cell: Vector2i = Vector2i(-1, -1)
 var gamepad_active := false
 var _tile_anim_timer := 0.0
+var _tile_anim_phase := 0.0
 var _tile_anim_frame := 0
 var _cell_size := TILE_PX * 2.0
 var _view_y_scale := VIEW_Y_SCALE
@@ -527,15 +538,27 @@ var citizen_sim: CitizenSim = CitizenSim.new()
 var vehicle_sim: VehicleSim = VehicleSim.new()
 var view_zoom := 1.0
 var view_pan := Vector2.ZERO
+## 0–3: Beat Cop camera orbit in 90° steps (0 ≈ SE, 1 ≈ SW, 2 ≈ NW, 3 ≈ NE).
+var view_yaw_quarter := 0
 var _is_panning := false
 var _pan_last := Vector2.ZERO
 ## 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk
 var day_time := 0.32
 var _last_day_phase: DayPhase = DayPhase.DAY
+var _day_light_timer := 0.0
+var door_timers: Dictionary = {} ## building_id -> seconds remaining open
+var bus_stop_cells: Array[Vector2i] = []
+var _cached_day_modulate := Color.WHITE
+var town_world ## TownWorld3D instance (loaded at runtime to avoid class_name cycles)
+var _world_viewport: SubViewport
+var _world_host: SubViewportContainer
+var _world_dirty := true
+var _world_dirty_timer := 0.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	clip_contents = true
 	texture_filter = TEXTURE_FILTER_NEAREST
 	TileLibrary.ensure_ready()
 	citizen_sim.setup(self)
@@ -545,41 +568,82 @@ func _ready() -> void:
 	if not vehicle_sim.chatter.is_connected(_on_citizen_chatter):
 		vehicle_sim.chatter.connect(_on_citizen_chatter)
 	_initialize_grids()
+	_setup_3d_view()
 	generate_board_shape()
 	_update_cell_size()
 	hovered_cell = _find_nearest_buildable(Vector2i(floori(GRID_WIDTH / 2.0), floori(GRID_HEIGHT / 2.0)))
 	_last_day_phase = get_day_phase()
+	_cached_day_modulate = day_modulate()
 	_emit_history_changed()
-	queue_redraw()
+	_mark_world_dirty()
+
+
+func _setup_3d_view() -> void:
+	_world_host = SubViewportContainer.new()
+	_world_host.name = "WorldHost"
+	_world_host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_world_host.stretch = true
+	_world_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world_host.texture_filter = TEXTURE_FILTER_NEAREST
+	add_child(_world_host)
+	_world_viewport = SubViewport.new()
+	_world_viewport.name = "WorldViewport"
+	_world_viewport.own_world_3d = true
+	_world_viewport.transparent_bg = false
+	_world_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_world_viewport.msaa_3d = Viewport.MSAA_2X
+	_world_host.add_child(_world_viewport)
+	town_world = (load("res://TownWorld3D.gd") as GDScript).new()
+	town_world.name = "TownWorld"
+	_world_viewport.add_child(town_world)
+	town_world.setup(self)
+
+
+func _mark_world_dirty() -> void:
+	_world_dirty = true
+	_world_dirty_timer = 0.0
+
+
+func _flush_world_rebuild() -> void:
+	if town_world == null:
+		return
+	if _world_dirty:
+		town_world.rebuild()
+		_world_dirty = false
+		_world_dirty_timer = 0.0
 
 
 func _process(delta: float) -> void:
-	var need_redraw := false
+	_tile_anim_phase += delta * TileLibrary.ANIM_FPS
+	_tile_anim_frame = int(_tile_anim_phase) % ANIM_FRAME_MODULO
 	_tile_anim_timer += delta
-	if _tile_anim_timer >= TILE_ANIM_INTERVAL:
-		_tile_anim_timer = 0.0
-		_tile_anim_frame = (_tile_anim_frame + 1) % ANIM_FRAME_MODULO
-		need_redraw = true
 
 	day_time = fposmod(day_time + delta / DAY_LENGTH_SEC, 1.0)
 	var phase := get_day_phase()
 	if phase != _last_day_phase:
 		_last_day_phase = phase
 		day_phase_changed.emit(day_phase_name(phase))
-		need_redraw = true
+
+	_day_light_timer += delta
+	if _day_light_timer >= 0.35:
+		_day_light_timer = 0.0
+		_cached_day_modulate = day_modulate()
 
 	if citizen_sim != null:
 		citizen_sim.tick(delta)
-		if not citizen_sim.citizens.is_empty():
-			need_redraw = true
 	if vehicle_sim != null:
 		vehicle_sim.tick(delta)
-		if not vehicle_sim.vehicles.is_empty():
-			need_redraw = true
-	# Lighting drifts continuously through the 12-minute day.
-	need_redraw = true
-	if need_redraw:
-		queue_redraw()
+	_tick_doors(delta)
+
+	if town_world != null:
+		if _world_dirty:
+			_world_dirty_timer += delta
+			var can_rebuild := (not is_brush_painting and not is_drag_erasing) or _world_dirty_timer >= 0.07
+			if can_rebuild:
+				town_world.rebuild()
+				_world_dirty = false
+				_world_dirty_timer = 0.0
+		town_world.sync_frame()
 
 
 func _on_citizen_chatter(message: String) -> void:
@@ -692,6 +756,13 @@ func _ground_rect(x: int, y: int, origin: Vector2) -> Rect2:
 	return Rect2(_cell_screen_pos(x, y, origin), Vector2(_cell_size, _row_height()))
 
 
+func _ground_rect_f(fx: float, fy: float, origin: Vector2) -> Rect2:
+	return Rect2(
+		origin + Vector2(fx * _cell_size, fy * _row_height()),
+		Vector2(_cell_size, _row_height())
+	)
+
+
 func _elevated_rect(x: int, y: int, height_factor: float, origin: Vector2) -> Rect2:
 	var ground := _ground_rect(x, y, origin)
 	var height := _cell_size * height_factor
@@ -703,19 +774,34 @@ func _elevated_rect(x: int, y: int, height_factor: float, origin: Vector2) -> Re
 
 
 func _building_height_factor(building_type: BuildingType) -> float:
+	# Rough city-block scale in world units (CELL ≈ one lot tile).
 	match building_type:
 		BuildingType.SKYSCRAPER:
-			return 2.05
-		BuildingType.DOWNTOWN, BuildingType.HOTEL, BuildingType.OFFICE:
-			return 1.65
-		BuildingType.HOSPITAL, BuildingType.SCHOOL, BuildingType.FACTORY, BuildingType.WAREHOUSE:
-			return 1.45
+			return 7.2
+		BuildingType.DOWNTOWN:
+			return 4.8
+		BuildingType.HOTEL:
+			return 4.2
+		BuildingType.OFFICE:
+			return 3.6
+		BuildingType.HOSPITAL:
+			return 2.8
+		BuildingType.SCHOOL:
+			return 2.4
+		BuildingType.FACTORY:
+			return 2.6
+		BuildingType.WAREHOUSE:
+			return 2.2
 		BuildingType.STADIUM:
-			return 1.35
-		BuildingType.SHOPS, BuildingType.MARKET, BuildingType.RESIDENTIAL, BuildingType.HARBOR:
-			return 1.25
+			return 2.5
+		BuildingType.SHOPS, BuildingType.MARKET:
+			return 1.6
+		BuildingType.RESIDENTIAL:
+			return 1.8
+		BuildingType.HARBOR:
+			return 1.9
 		BuildingType.PARK, BuildingType.FARM:
-			return 1.05
+			return 0.8
 		_:
 			return ELEVATION_HEIGHT
 
@@ -738,17 +824,87 @@ func _building_bounds(building_id: int) -> Rect2i:
 	return Rect2i(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
 
 
-func _facade_rect(bounds: Rect2i, height_factor: float, origin: Vector2) -> Rect2:
-	var tl := _cell_screen_pos(bounds.position.x, bounds.position.y, origin)
-	var br := _cell_screen_pos(bounds.position.x + bounds.size.x, bounds.position.y + bounds.size.y, origin)
-	var ground := Rect2(tl, br - tl)
-	# Slightly taller for deeper lots so the block reads as a street wall.
-	var depth_boost := 1.0 + 0.12 * float(maxi(0, bounds.size.y - 1))
-	var height := _cell_size * height_factor * depth_boost
-	return Rect2(
-		Vector2(ground.position.x, ground.position.y + ground.size.y - height),
-		Vector2(ground.size.x, height)
+func _is_building_frontage(cell: Vector2i, building_id: int) -> bool:
+	# Southern edge of the lot (or any cell with no same-building neighbor south).
+	var below := cell + Vector2i(0, 1)
+	if not _is_in_bounds(below):
+		return true
+	return building_ids[below.y][below.x] != building_id
+
+
+func building_door_cell(building_id: int) -> Vector2i:
+	var bounds := _building_bounds(building_id)
+	if bounds.size.x <= 0:
+		return Vector2i(-1, -1)
+	return Vector2i(
+		bounds.position.x + int(bounds.size.x / 2.0),
+		bounds.position.y + bounds.size.y - 1
 	)
+
+
+func building_approach_cell(building_id: int) -> Vector2i:
+	var door := building_door_cell(building_id)
+	if door.x < 0:
+		return Vector2i(-1, -1)
+	for d: Vector2i in [Vector2i(0, 1), Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, -1)]:
+		var cand: Vector2i = door + d
+		if not _is_in_bounds(cand):
+			continue
+		if terrain_cells[cand.y][cand.x] != TerrainType.OPEN:
+			continue
+		var inner: BuildingType = inner_cells[cand.y][cand.x]
+		if inner == BuildingType.NONE or inner == BuildingType.ROAD:
+			return cand
+	return Vector2i(-1, -1)
+
+
+func open_door(building_id: int, duration: float = 1.1) -> void:
+	if building_id <= 0:
+		return
+	door_timers[building_id] = maxf(float(door_timers.get(building_id, 0.0)), duration)
+
+
+func is_door_open(building_id: int) -> bool:
+	return float(door_timers.get(building_id, 0.0)) > 0.0
+
+
+func _tick_doors(delta: float) -> void:
+	if door_timers.is_empty():
+		return
+	var dead: Array = []
+	for bid in door_timers.keys():
+		door_timers[bid] = float(door_timers[bid]) - delta
+		if float(door_timers[bid]) <= 0.0:
+			dead.append(bid)
+	for bid in dead:
+		door_timers.erase(bid)
+
+
+func clear_bus_stops() -> void:
+	bus_stop_cells.clear()
+
+
+func register_bus_stop(cell: Vector2i) -> void:
+	if not bus_stop_cells.has(cell):
+		bus_stop_cells.append(cell)
+
+
+func nearest_bus_stop_road(from: Vector2i) -> Vector2i:
+	# Find a road cell adjacent to a bus stop, closest to `from`.
+	var best := Vector2i(-1, -1)
+	var best_d := 999999
+	for stop in bus_stop_cells:
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var road: Vector2i = stop + d
+			if not _is_in_bounds(road):
+				continue
+			if inner_cells[road.y][road.x] != BuildingType.ROAD:
+				continue
+			var dist := absi(road.x - from.x) + absi(road.y - from.y)
+			if dist < best_d:
+				best_d = dist
+				best = road
+	return best
 
 
 func _actor_rect(ground: Rect2, width_frac: float, height_frac: float) -> Rect2:
@@ -766,14 +922,8 @@ func _actor_rect(ground: Rect2, width_frac: float, height_frac: float) -> Rect2:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_update_cell_size()
-		queue_redraw()
 	elif what == NOTIFICATION_DRAG_END:
-		ghost_type = BuildingType.NONE
-		ghost_rotated = false
-		ghost_valid = false
-		hovered_cell = Vector2i(-1, -1)
-		active_drag_rotated = false
-		queue_redraw()
+		pass
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -795,6 +945,22 @@ func _gui_input(event: InputEvent) -> void:
 			_pan_last = mb.position
 			accept_event()
 			return
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			var cell := _cell_from_mouse(mb.position)
+			if not gamepad_active and _is_in_bounds(cell):
+				hovered_cell = cell
+			if mb.pressed:
+				is_brush_painting = true
+				paint_stroke_started = false
+				last_paint_cell = Vector2i(-999, -999)
+				_try_paint(cell)
+			else:
+				is_brush_painting = false
+				paint_stroke_started = false
+			_refresh_ghost_at_hover()
+			queue_redraw()
+			accept_event()
+			return
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			var cell := _cell_from_mouse(mb.position)
 			if mb.pressed:
@@ -807,6 +973,7 @@ func _gui_input(event: InputEvent) -> void:
 				is_drag_erasing = false
 				erase_stroke_started = false
 			queue_redraw()
+			accept_event()
 			return
 
 	if event is InputEventMouseMotion:
@@ -819,12 +986,14 @@ func _gui_input(event: InputEvent) -> void:
 			queue_redraw()
 			accept_event()
 			return
-		# Keep DoF focus aligned with cursor when using mouse (gamepad owns hover).
 		if not gamepad_active:
 			var hover := _cell_from_mouse(mm.position)
 			if _is_in_bounds(hover):
 				hovered_cell = hover
+				_refresh_ghost_at_hover()
 		_update_hover_tooltip(mm.position)
+		if is_brush_painting:
+			_try_paint(_cell_from_mouse(mm.position))
 		if is_drag_erasing:
 			var cell := _cell_from_mouse(mm.position)
 			if _is_buildable(cell):
@@ -857,12 +1026,21 @@ func pan_by(delta_screen: Vector2) -> void:
 	queue_redraw()
 
 
+func rotate_view_yaw(steps: int = 1) -> void:
+	view_yaw_quarter = posmod(view_yaw_quarter + steps, 4)
+	_mark_world_dirty()
+
+
+func view_yaw_radians() -> float:
+	return deg_to_rad(float(view_yaw_quarter) * 90.0)
+
+
 func _clamp_pan() -> void:
 	if view_zoom <= 1.001:
 		view_pan = Vector2.ZERO
 		return
 	var world_size := Vector2(GRID_WIDTH * _cell_size, GRID_HEIGHT * _row_height())
-	var max_pan := world_size * 0.35 * (view_zoom - 1.0)
+	var max_pan := world_size * 0.22 * (view_zoom - 1.0)
 	view_pan = view_pan.clamp(-max_pan, max_pan)
 
 
@@ -906,208 +1084,33 @@ func _dof_strength(cell: Vector2i) -> float:
 	return clampf((dist - start) / range_cells, 0.0, 1.0)
 
 
-func _can_drop_data(at_position: Vector2, data: Variant) -> bool:
-	if not _is_valid_drag_data(data):
-		return false
-
-	ghost_type = data["building_type"] as BuildingType
-	ghost_rotated = active_drag_rotated
-	hovered_cell = _cell_from_mouse(at_position)
+func _refresh_ghost_at_hover() -> void:
+	if ghost_type == BuildingType.NONE or not _is_in_bounds(hovered_cell):
+		ghost_valid = false
+		return
+	ghost_rotated = active_brush_rotated
 	ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
-	queue_redraw()
-	# Keep accepting while dragging so the ghost updates; drop itself enforces validity.
-	return true
 
 
-func _drop_data(at_position: Vector2, data: Variant) -> void:
-	if not _is_valid_drag_data(data):
-		return
+func _can_drop_data(_at_position: Vector2, _data: Variant) -> bool:
+	return false
 
-	var cell := _cell_from_mouse(at_position)
-	var building_type := data["building_type"] as BuildingType
-	var rotated := active_drag_rotated
-	if not _is_footprint_valid(cell, building_type, rotated):
-		return
 
-	_push_undo_snapshot()
-	_stamp_building(cell.x, cell.y, building_type, rotated)
-	ghost_type = BuildingType.NONE
-	ghost_rotated = false
-	ghost_valid = false
-	hovered_cell = Vector2i(-1, -1)
-	active_drag_rotated = false
-	queue_redraw()
+func _drop_data(_at_position: Vector2, _data: Variant) -> void:
+	pass
 
 
 func _draw() -> void:
-	var origin := _grid_origin()
-	# Pass 1: foreshortened ground / water / roads / influence (back to front).
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			var cell := Vector2i(x, y)
-			# Slight overlap hides foreshortened seams (living map, not graph paper).
-			var cell_rect := _ground_rect(x, y, origin).grow(0.6)
-			var terrain: TerrainType = terrain_cells[y][x]
-			if not land_mask[y][x]:
-				_draw_water_cell(cell_rect, cell, true)
-				continue
-
-			if terrain == TerrainType.WATER:
-				_draw_water_cell(cell_rect, cell, false)
-				continue
-
-			if terrain == TerrainType.MOUNTAIN or terrain == TerrainType.RUINS:
-				_draw_tile_world(cell_rect, TileLibrary.open_tex((x * 3 + y) % 4), cell)
-				continue
-
-			var inner_type: BuildingType = inner_cells[y][x]
-			if inner_type == BuildingType.ROAD:
-				_draw_tile_world(cell_rect, TileLibrary.road_auto_tex(_road_mask(cell)), cell)
-				continue
-			if inner_type != BuildingType.NONE:
-				# Sidewalk lot under every building — continuous street base.
-				_draw_tile_world(cell_rect, TileLibrary.sidewalk_tex((x + y) % 2), cell)
-				continue
-
-			var result := _resolve_outer_result(x, y)
-			var recipe_id: String = str(result.get("recipe_id", ""))
-			if not recipe_id.is_empty():
-				_draw_tile_world(cell_rect, TileLibrary.recipe_tex(recipe_id), cell)
-			elif result.has("influence_type"):
-				_draw_tile_world(cell_rect, TileLibrary.influence_tex(result["influence_type"] as BuildingType), cell)
-			else:
-				_draw_tile_world(cell_rect, TileLibrary.open_tex((x * 3 + y * 7) % 4), cell)
-				if str(result.get("name", "")) == "Mixed Influence":
-					var mixed := _world_to_screen_rect(cell_rect)
-					var dof := _dof_strength(cell)
-					draw_rect(mixed, Color(0.25, 0.2, 0.35, 0.22 * (1.0 - dof * 0.4)), true)
-
-	# Pass 2: tall sprites — mountains/ruins + one facade per building id.
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			if not land_mask[y][x]:
-				continue
-			var cell := Vector2i(x, y)
-			var terrain: TerrainType = terrain_cells[y][x]
-			if terrain == TerrainType.MOUNTAIN:
-				_draw_tile_world(
-					_elevated_rect(x, y, TERRAIN_ELEVATION, origin),
-					TileLibrary.mountain_auto_tex(_terrain_mask(cell, TerrainType.MOUNTAIN)),
-					cell
-				)
-				continue
-			if terrain == TerrainType.RUINS:
-				_draw_tile_world(
-					_elevated_rect(x, y, TERRAIN_ELEVATION * 0.85, origin),
-					TileLibrary.ruins_auto_tex(_terrain_mask(cell, TerrainType.RUINS), _tile_anim_frame),
-					cell
-				)
-				continue
-			if terrain != TerrainType.OPEN:
-				continue
-
-	_draw_building_facades(origin)
-	_draw_citizens(origin)
-	_draw_vehicles(origin)
-	_draw_ghost_preview(origin)
-	_draw_day_overlay()
+	# Rendering is handled by TownWorld3D inside the SubViewport.
+	pass
 
 
-func _draw_building_facades(origin: Vector2) -> void:
-	var drawn: Dictionary = {}
-	# Back-to-front by southern edge so nearer facades cover farther ones.
-	var entries: Array[Dictionary] = []
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			if not land_mask[y][x]:
-				continue
-			if terrain_cells[y][x] != TerrainType.OPEN:
-				continue
-			var building_id: int = building_ids[y][x]
-			if building_id == 0 or drawn.has(building_id):
-				continue
-			var inner_type: BuildingType = inner_cells[y][x]
-			if inner_type == BuildingType.NONE or inner_type == BuildingType.ROAD:
-				continue
-			drawn[building_id] = true
-			var bounds := _building_bounds(building_id)
-			if bounds.size.x <= 0:
-				continue
-			entries.append({
-				"id": building_id,
-				"type": inner_type,
-				"bounds": bounds,
-				"sort_y": bounds.position.y + bounds.size.y,
-			})
-	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return int(a["sort_y"]) < int(b["sort_y"])
-	)
-	for entry in entries:
-		var bounds: Rect2i = entry["bounds"]
-		var building_type: BuildingType = entry["type"]
-		var facade := _facade_rect(bounds, _building_height_factor(building_type), origin)
-		var anchor := Vector2i(bounds.position.x, bounds.position.y + bounds.size.y - 1)
-		var shadow := _world_to_screen_rect(facade.grow(1.0))
-		draw_rect(shadow, Color(0.05, 0.05, 0.08, 0.32 * (1.0 - _dof_strength(anchor) * 0.5)), true)
-		var b_frames := TileLibrary.building_frame_count(building_type)
-		_draw_tile_world(
-			facade,
-			TileLibrary.building_tex(building_type, _tile_anim_frame % b_frames),
-			anchor
-		)
+func _cell_adjacent_to_road(cell: Vector2i) -> bool:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if _is_road_cell(cell + d):
+			return true
+	return false
 
-
-func _draw_water_cell(cell_rect: Rect2, cell: Vector2i, _ocean: bool) -> void:
-	# Seamless water body with neighbor-aware shore foam; anim phase by cell.
-	var mask := _water_mask(cell)
-	var frame := (_tile_anim_frame + cell.x * 3 + cell.y * 5) % TileLibrary.WATER_FRAMES
-	# Tiny sink so water sits slightly under grass lips without per-cell basins.
-	var sunk := cell_rect.grow(0.4)
-	sunk.position.y += _row_height() * 0.06
-	draw_rect(_world_to_screen_rect(cell_rect.grow(0.8)), Color(0.12, 0.28, 0.4, 1.0), true)
-	_draw_tile_world(sunk, TileLibrary.water_auto_tex(mask, frame), cell)
-
-
-func _draw_vehicles(origin: Vector2) -> void:
-	if vehicle_sim == null:
-		return
-	for vehicle in vehicle_sim.get_sorted_for_draw():
-		var cell: Vector2i = vehicle["cell"]
-		if not _is_in_bounds(cell):
-			continue
-		var ground := _ground_rect(cell.x, cell.y, origin)
-		var kind: int = int(vehicle.get("kind", TileLibrary.VehicleKind.CAR))
-		var w_frac := CAR_W
-		var h_frac := CAR_H
-		match kind:
-			TileLibrary.VehicleKind.BUS:
-				w_frac = BUS_W
-				h_frac = BUS_H
-			TileLibrary.VehicleKind.BIKE:
-				w_frac = BIKE_W
-				h_frac = BIKE_H
-		var dest := _actor_rect(ground, w_frac, h_frac)
-		_draw_tile_world(
-			dest,
-			TileLibrary.vehicle_tex(
-				kind as TileLibrary.VehicleKind,
-				int(vehicle.get("dir", 0)),
-				int(vehicle.get("walk_frame", 0))
-			),
-			cell
-		)
-
-
-func _draw_day_overlay() -> void:
-	var alpha := day_overlay_alpha()
-	if alpha <= 0.001:
-		return
-	var night := Color(0.05, 0.08, 0.2, alpha)
-	if get_day_phase() == DayPhase.DUSK:
-		night = Color(0.35, 0.12, 0.1, alpha)
-	elif get_day_phase() == DayPhase.DAWN:
-		night = Color(0.55, 0.35, 0.25, alpha)
-	draw_rect(Rect2(Vector2.ZERO, size), night, true)
 
 
 func _water_mask(cell: Vector2i) -> int:
@@ -1149,6 +1152,278 @@ func _road_mask(cell: Vector2i) -> int:
 	return mask
 
 
+## Road topology for paint + traffic.
+## style: 0 one-way, 1 two-way, 2 crossing, 3 roundabout, 4 corner/stub
+## flow: travel dir 0=S 1=W 2=E 3=N (-1 if free)
+## lane_side: for two-way, 0=twin east/south, 1=twin west/north, -1=n/a
+func road_info(cell: Vector2i) -> Dictionary:
+	if not _is_road_cell(cell):
+		return {"style": -1, "flow": -1, "mask": 0, "dual": false, "lane_side": -1}
+	var mask := _road_mask(cell)
+	var has_n := (mask & TileLibrary.MASK_N) != 0
+	var has_e := (mask & TileLibrary.MASK_E) != 0
+	var has_s := (mask & TileLibrary.MASK_S) != 0
+	var has_w := (mask & TileLibrary.MASK_W) != 0
+	var arms := int(has_n) + int(has_e) + int(has_s) + int(has_w)
+	var ns := has_n or has_s
+	var ew := has_e or has_w
+
+	if _is_roundabout_cell(cell):
+		return {
+			"style": 3,
+			"flow": _roundabout_flow(cell),
+			"mask": mask,
+			"dual": false,
+			"lane_side": -1,
+		}
+
+	# Parallel twin first — 2-wide corridors have 3 neighbors and must not become crossings.
+	var ns_twin := _parallel_twin_side(cell, true) # 0=east, 1=west, -1=none
+	var ew_twin := _parallel_twin_side(cell, false) # 0=south, 1=north, -1=none
+	if ns_twin >= 0 and ew_twin < 0:
+		# NS two-way, unless a real perpendicular road joins (not the twin).
+		if _has_foreign_cross(cell, true, ns_twin):
+			return {"style": 2, "flow": -1, "mask": mask, "dual": false, "lane_side": -1}
+		var flow_ns := 0 if ns_twin == 0 else 3
+		return {"style": 1, "flow": flow_ns, "mask": mask, "dual": true, "lane_side": ns_twin}
+	if ew_twin >= 0 and ns_twin < 0:
+		if _has_foreign_cross(cell, false, ew_twin):
+			return {"style": 2, "flow": -1, "mask": mask, "dual": false, "lane_side": -1}
+		var flow_ew := 2 if ew_twin == 0 else 1
+		return {"style": 1, "flow": flow_ew, "mask": mask, "dual": true, "lane_side": ew_twin}
+
+	if arms >= 3:
+		return {"style": 2, "flow": -1, "mask": mask, "dual": false, "lane_side": -1}
+
+	if arms == 2 and ns and ew:
+		return {"style": 4, "flow": -1, "mask": mask, "dual": false, "lane_side": -1}
+
+	var north_south := ns and not ew
+	var flow := _one_way_flow(has_n, has_e, has_s, has_w, north_south)
+	return {"style": 0, "flow": flow, "mask": mask, "dual": false, "lane_side": -1}
+
+
+func _one_way_flow(has_n: bool, has_e: bool, has_s: bool, has_w: bool, north_south: bool) -> int:
+	var arms := int(has_n) + int(has_e) + int(has_s) + int(has_w)
+	if arms <= 1:
+		if has_n:
+			return 3
+		if has_s:
+			return 0
+		if has_e:
+			return 2
+		if has_w:
+			return 1
+		return 0
+	if north_south:
+		return 0
+	return 2
+
+
+func _parallel_twin_side(cell: Vector2i, north_south: bool) -> int:
+	# Side-adjacent road that runs the same axis → the other half of a two-way.
+	var self_mask := _road_mask(cell)
+	if north_south:
+		var self_ns := ((self_mask & TileLibrary.MASK_N) != 0) or ((self_mask & TileLibrary.MASK_S) != 0)
+		if _is_axis_twin_neighbor(cell + Vector2i(1, 0), true, self_ns):
+			return 0
+		if _is_axis_twin_neighbor(cell + Vector2i(-1, 0), true, self_ns):
+			return 1
+	else:
+		var self_ew := ((self_mask & TileLibrary.MASK_E) != 0) or ((self_mask & TileLibrary.MASK_W) != 0)
+		if _is_axis_twin_neighbor(cell + Vector2i(0, 1), false, self_ew):
+			return 0
+		if _is_axis_twin_neighbor(cell + Vector2i(0, -1), false, self_ew):
+			return 1
+	return -1
+
+
+func _is_axis_twin_neighbor(cell: Vector2i, north_south: bool, self_has_axis: bool) -> bool:
+	if not _is_road_cell(cell):
+		return false
+	var nm := _road_mask(cell)
+	var t_ns := int((nm & TileLibrary.MASK_N) != 0) + int((nm & TileLibrary.MASK_S) != 0)
+	var t_ew := int((nm & TileLibrary.MASK_E) != 0) + int((nm & TileLibrary.MASK_W) != 0)
+	if north_south:
+		if t_ns >= 1:
+			return true
+		# Perpendicular spur into an NS road is not a twin.
+		if self_has_axis and t_ns == 0 and t_ew >= 1:
+			return false
+		# Two-wide seed: neither cell has length yet.
+		return not self_has_axis and t_ns == 0 and t_ew <= 1
+	if t_ew >= 1:
+		return true
+	if self_has_axis and t_ew == 0 and t_ns >= 1:
+		return false
+	return not self_has_axis and t_ew == 0 and t_ns <= 1
+
+
+func _is_same_axis_corridor(cell: Vector2i, north_south: bool) -> bool:
+	if not _is_road_cell(cell):
+		return false
+	var nm := _road_mask(cell)
+	var t_ns := int((nm & TileLibrary.MASK_N) != 0) + int((nm & TileLibrary.MASK_S) != 0)
+	var t_ew := int((nm & TileLibrary.MASK_E) != 0) + int((nm & TileLibrary.MASK_W) != 0)
+	if north_south:
+		return t_ns >= 1
+	return t_ew >= 1
+
+
+func _has_foreign_cross(cell: Vector2i, north_south_dual: bool, twin_side: int) -> bool:
+	# True when a perpendicular road joins this dual cell (not just the twin).
+	if north_south_dual:
+		# Twin is east (0) or west (1). A foreign EW link is the opposite side, or
+		# an EW-running neighbor on the twin side beyond a junction — use non-twin E/W.
+		if twin_side == 0 and _is_road_cell(cell + Vector2i(-1, 0)):
+			if not _is_same_axis_corridor(cell + Vector2i(-1, 0), true):
+				return true
+		if twin_side == 1 and _is_road_cell(cell + Vector2i(1, 0)):
+			if not _is_same_axis_corridor(cell + Vector2i(1, 0), true):
+				return true
+		# Also: north/south neighbor that is predominantly EW (incoming cross street).
+		for d: Vector2i in [Vector2i(0, -1), Vector2i(0, 1)]:
+			var n: Vector2i = cell + d
+			if not _is_road_cell(n):
+				continue
+			if _is_same_axis_corridor(n, false) and not _is_same_axis_corridor(n, true):
+				return true
+		return false
+	# EW dual — twin south (0) or north (1).
+	if twin_side == 0 and _is_road_cell(cell + Vector2i(0, -1)):
+		if not _is_same_axis_corridor(cell + Vector2i(0, -1), false):
+			return true
+	if twin_side == 1 and _is_road_cell(cell + Vector2i(0, 1)):
+		if not _is_same_axis_corridor(cell + Vector2i(0, 1), false):
+			return true
+	for d2: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0)]:
+		var n2: Vector2i = cell + d2
+		if not _is_road_cell(n2):
+			continue
+		if _is_same_axis_corridor(n2, true) and not _is_same_axis_corridor(n2, false):
+			return true
+	return false
+
+
+func _is_roundabout_cell(cell: Vector2i) -> bool:
+	if not _is_road_cell(cell):
+		return false
+	var ring := _road_component_cells(cell, 20)
+	return _component_is_roundabout(ring)
+
+
+func _component_is_roundabout(ring: Array[Vector2i]) -> bool:
+	if ring.size() < 4 or ring.size() > 16:
+		return false
+	var min_x := 999
+	var min_y := 999
+	var max_x := -999
+	var max_y := -999
+	var ring_cells: Dictionary = {}
+	for c in ring:
+		ring_cells[c] = true
+		min_x = mini(min_x, c.x)
+		min_y = mini(min_y, c.y)
+		max_x = maxi(max_x, c.x)
+		max_y = maxi(max_y, c.y)
+	if max_x - min_x < 2 or max_y - min_y < 2:
+		return false
+	# Prefer ring-like: most cells degree 2; allow a couple of feeder T-junctions.
+	var corners := 0
+	var high_degree := 0
+	for c in ring:
+		var m := _road_mask(c)
+		var arms := 0
+		for bit in [TileLibrary.MASK_N, TileLibrary.MASK_E, TileLibrary.MASK_S, TileLibrary.MASK_W]:
+			if (m & bit) != 0:
+				arms += 1
+		if arms >= 3:
+			high_degree += 1
+		var c_ns := ((m & TileLibrary.MASK_N) != 0) or ((m & TileLibrary.MASK_S) != 0)
+		var c_ew := ((m & TileLibrary.MASK_E) != 0) or ((m & TileLibrary.MASK_W) != 0)
+		if arms == 2 and c_ns and c_ew:
+			corners += 1
+	if corners < 3 or high_degree > 2:
+		return false
+	for y in range(min_y + 1, max_y):
+		for x in range(min_x + 1, max_x):
+			if not ring_cells.has(Vector2i(x, y)):
+				return true
+	return false
+
+
+func _road_component_cells(start: Vector2i, limit: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var seen: Dictionary = {}
+	var stack: Array[Vector2i] = [start]
+	seen[start] = true
+	while not stack.is_empty() and out.size() < limit:
+		var c: Vector2i = stack.pop_back()
+		out.append(c)
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + d
+			if seen.has(n) or not _is_road_cell(n):
+				continue
+			seen[n] = true
+			stack.append(n)
+	# If we hit the limit, component is likely a big network — not a roundabout.
+	if out.size() >= limit:
+		return []
+	return out
+
+
+func _roundabout_flow(cell: Vector2i) -> int:
+	# Counter-clockwise around the island (keep-right / US-style).
+	var ring := _road_component_cells(cell, 20)
+	if ring.is_empty():
+		return 2
+	var cx := 0.0
+	var cy := 0.0
+	for c in ring:
+		cx += float(c.x)
+		cy += float(c.y)
+	cx /= float(ring.size())
+	cy /= float(ring.size())
+	var rx := float(cell.x) - cx
+	var rz := float(cell.y) - cy
+	# CCW tangent in (x, z=+south): (rz, rx) → west at north rim.
+	var tx := rz
+	var tz := rx
+	if absf(tx) >= absf(tz):
+		return 2 if tx > 0.0 else 1
+	return 0 if tz > 0.0 else 3
+
+
+func road_allows_step(from: Vector2i, to: Vector2i) -> bool:
+	if not _is_road_cell(to):
+		return false
+	var delta := to - from
+	if absi(delta.x) + absi(delta.y) != 1:
+		return false
+	var info: Dictionary = road_info(from)
+	var style: int = int(info.get("style", -1))
+	var flow: int = int(info.get("flow", -1))
+	# Crossings / corners: free.
+	if style == 2 or style == 4 or flow < 0:
+		return true
+	# Two-way corridor: either direction along the road axis.
+	if style == 1:
+		if flow == 0 or flow == 3:
+			return delta.x == 0
+		return delta.y == 0
+	# One-way / roundabout: only with traffic.
+	match flow:
+		0:
+			return delta == Vector2i(0, 1)
+		1:
+			return delta == Vector2i(-1, 0)
+		2:
+			return delta == Vector2i(1, 0)
+		3:
+			return delta == Vector2i(0, -1)
+	return true
+
+
 func _same_terrain(cell: Vector2i, terrain: TerrainType) -> bool:
 	if not _is_in_bounds(cell) or not land_mask[cell.y][cell.x]:
 		return false
@@ -1173,63 +1448,6 @@ func _water_needs_shore(cell: Vector2i, neighbor_delta: Vector2i) -> bool:
 	return not _is_water_like(cell + neighbor_delta)
 
 
-func _draw_citizens(origin: Vector2) -> void:
-	if citizen_sim == null:
-		return
-	for citizen in citizen_sim.get_sorted_for_draw():
-		var cell: Vector2i = citizen["cell"]
-		if not _is_in_bounds(cell):
-			continue
-		var ground := _ground_rect(cell.x, cell.y, origin)
-		var dest := _actor_rect(ground, NPC_W, NPC_H)
-		var dir: int = int(citizen.get("dir", 0))
-		var frame: int = int(citizen.get("walk_frame", 0))
-		_draw_tile_world(dest, TileLibrary.citizen_tex(dir, frame), cell)
-		var emote_name := str(citizen.get("emote", ""))
-		if not emote_name.is_empty():
-			var bubble := Rect2(
-				Vector2(dest.position.x + dest.size.x * 0.2, dest.position.y - _cell_size * EMOTE_W),
-				Vector2(_cell_size * EMOTE_W, _cell_size * EMOTE_W)
-			)
-			var bubble_screen := _world_to_screen_rect(bubble.grow(1.0))
-			draw_rect(bubble_screen, Color(0.05, 0.05, 0.08, 0.55), true)
-			_draw_tile_world(bubble, TileLibrary.emote_tex(emote_name), cell)
-
-
-func _draw_tile_world(rect: Rect2, texture: Texture2D, cell: Vector2i, tint: Color = Color.WHITE) -> void:
-	var screen_rect := _world_to_screen_rect(rect)
-	var dof := _dof_strength(cell)
-	var m := tint * day_modulate()
-	m = m.darkened(dof * 0.32)
-	m.a *= 1.0 - dof * 0.28
-	if texture == null:
-		draw_rect(screen_rect, Color(0.2, 0.22, 0.28, m.a), true)
-		return
-	if dof > 0.06:
-		var blur := dof * (1.1 + view_zoom * 0.55)
-		var soft := Color(m.r, m.g, m.b, m.a * 0.18)
-		for offset in [
-			Vector2(blur, 0),
-			Vector2(-blur, 0),
-			Vector2(0, blur * 0.85),
-			Vector2(0, -blur * 0.85),
-			Vector2(blur * 0.65, blur * 0.65),
-			Vector2(-blur * 0.65, -blur * 0.65),
-			Vector2(blur * 0.65, -blur * 0.65),
-			Vector2(-blur * 0.65, blur * 0.65),
-		]:
-			draw_texture_rect(texture, Rect2(screen_rect.position + offset, screen_rect.size), false, soft)
-	draw_texture_rect(texture, screen_rect, false, m)
-
-
-func _draw_tile(rect: Rect2, texture: Texture2D, tint: Color = Color.WHITE) -> void:
-	# Legacy helper for non-world-space draws (unused by main path).
-	if texture == null:
-		draw_rect(rect, Color(0.2, 0.22, 0.28), true)
-		return
-	draw_texture_rect(texture, rect, false, tint)
-
-
 func clear_grid() -> void:
 	if _grid_is_empty():
 		return
@@ -1242,15 +1460,16 @@ func clear_grid() -> void:
 	_recalculate_outer_influences()
 	if citizen_sim != null:
 		citizen_sim.clear()
+	if vehicle_sim != null:
+		vehicle_sim.clear()
 		town_chatter.emit("The streets emptied.")
 	if vehicle_sim != null:
 		vehicle_sim.clear()
-	queue_redraw()
+	_mark_world_dirty()
 
 func generate_board_shape(p_seed: int = -1) -> void:
 	shape_seed = randi() if p_seed < 0 else p_seed
-	_generate_land_mask(shape_seed)
-	_generate_terrain_features(shape_seed)
+	_generate_elevation_map(shape_seed)
 	for y in GRID_HEIGHT:
 		for x in GRID_WIDTH:
 			inner_cells[y][x] = BuildingType.NONE
@@ -1269,7 +1488,7 @@ func generate_board_shape(p_seed: int = -1) -> void:
 	if ghost_type != BuildingType.NONE:
 		ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
 	_emit_history_changed()
-	queue_redraw()
+	_mark_world_dirty()
 
 
 func undo() -> void:
@@ -1278,7 +1497,7 @@ func undo() -> void:
 	redo_stack.append(_clone_state())
 	_restore_state(undo_stack.pop_back())
 	_emit_history_changed()
-	queue_redraw()
+	_mark_world_dirty()
 
 
 func redo() -> void:
@@ -1287,7 +1506,7 @@ func redo() -> void:
 	undo_stack.append(_clone_state())
 	_restore_state(redo_stack.pop_back())
 	_emit_history_changed()
-	queue_redraw()
+	_mark_world_dirty()
 
 
 func can_undo() -> bool:
@@ -1299,20 +1518,19 @@ func can_redo() -> bool:
 
 
 func toggle_drag_rotation() -> void:
-	if not get_viewport().gui_is_dragging():
-		return
-	var old_rotated := active_drag_rotated
-	active_drag_rotated = not active_drag_rotated
-	ghost_rotated = active_drag_rotated
-	if ghost_type != BuildingType.NONE and _is_in_bounds(hovered_cell):
-		hovered_cell = _anchor_after_rotation(hovered_cell, ghost_type, old_rotated, ghost_rotated)
-		ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
-	queue_redraw()
+	# Kept name for Main.gd; rotates the active brush ghost.
+	rotate_gamepad_selection()
 
 
 func set_gamepad_selection(building_type: BuildingType) -> void:
-	gamepad_active = true
 	ghost_type = building_type
+	ghost_rotated = active_brush_rotated
+	if ghost_type == BuildingType.NONE:
+		ghost_valid = false
+		hover_info_cell = Vector2i(-999, -999)
+		return
+	if not _is_in_bounds(hovered_cell):
+		hovered_cell = _find_nearest_buildable(Vector2i(floori(GRID_WIDTH / 2.0), floori(GRID_HEIGHT / 2.0)))
 	if not _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated):
 		hovered_cell = _find_nearest_valid_placement(hovered_cell, ghost_type, ghost_rotated)
 	ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
@@ -1323,9 +1541,9 @@ func set_gamepad_selection(building_type: BuildingType) -> void:
 func rotate_gamepad_selection() -> void:
 	if ghost_type == BuildingType.NONE:
 		return
-	gamepad_active = true
 	var old_rotated := ghost_rotated
 	ghost_rotated = not ghost_rotated
+	active_brush_rotated = ghost_rotated
 	if _is_in_bounds(hovered_cell):
 		hovered_cell = _anchor_after_rotation(hovered_cell, ghost_type, old_rotated, ghost_rotated)
 	if not _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated):
@@ -1368,23 +1586,60 @@ func move_gamepad_cursor(delta: Vector2i) -> void:
 
 
 func place_gamepad_selection() -> void:
-	if ghost_type == BuildingType.NONE:
-		return
-	gamepad_active = true
-	if not _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated):
-		return
-	_push_undo_snapshot()
-	_stamp_building(hovered_cell.x, hovered_cell.y, ghost_type, ghost_rotated)
-	ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
+	begin_gamepad_paint()
 
 
 func erase_gamepad_cell() -> void:
+	begin_gamepad_erase()
+
+
+func begin_gamepad_paint() -> void:
+	if ghost_type == BuildingType.NONE:
+		return
 	gamepad_active = true
+	is_brush_painting = true
+	paint_stroke_started = false
+	last_paint_cell = Vector2i(-999, -999)
+	_try_paint(hovered_cell)
+
+
+func continue_gamepad_paint() -> void:
+	if not is_brush_painting:
+		return
+	_try_paint(hovered_cell)
+
+
+func end_gamepad_paint() -> void:
+	if not is_brush_painting:
+		return
+	is_brush_painting = false
+	paint_stroke_started = false
+	_flush_world_rebuild()
+	ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
+
+
+func begin_gamepad_erase() -> void:
+	gamepad_active = true
+	is_drag_erasing = true
 	erase_stroke_started = false
 	last_erase_cell = Vector2i(-999, -999)
 	if _is_buildable(hovered_cell):
 		_try_erase(hovered_cell)
+
+
+func continue_gamepad_erase() -> void:
+	if not is_drag_erasing:
+		return
+	if _is_buildable(hovered_cell):
+		_try_erase(hovered_cell)
+
+
+func end_gamepad_erase() -> void:
+	if not is_drag_erasing:
+		return
+	is_drag_erasing = false
 	erase_stroke_started = false
+	_flush_world_rebuild()
 
 
 static func type_name(building_type: BuildingType) -> String:
@@ -1436,9 +1691,17 @@ static func type_footprint(building_type: BuildingType, rotated: bool = false) -
 	return footprint
 
 
-static func type_outer_radius(building_type: BuildingType, rotated: bool = false) -> int:
-	var footprint := type_footprint(building_type, rotated)
-	return mini(footprint.x, footprint.y)
+static func type_outer_radius(building_type: BuildingType, _rotated: bool = false) -> int:
+	# Base ring; merged lots refresh radius from actual bounds after stamp.
+	match building_type:
+		BuildingType.ROAD:
+			return 1
+		BuildingType.PARK, BuildingType.FARM:
+			return 2
+		BuildingType.SKYSCRAPER, BuildingType.DOWNTOWN, BuildingType.STADIUM:
+			return 3
+		_:
+			return 2
 
 
 static func recipe_list() -> Array[Dictionary]:
@@ -1448,9 +1711,9 @@ static func recipe_list() -> Array[Dictionary]:
 static func terrain_name(terrain: TerrainType) -> String:
 	match terrain:
 		TerrainType.WATER:
-			return "Water Reservoir"
+			return "Lowland Water"
 		TerrainType.MOUNTAIN:
-			return "Mountain"
+			return "Highland Peak"
 		TerrainType.RUINS:
 			return "Ancient Ruins"
 		_:
@@ -1459,8 +1722,8 @@ static func terrain_name(terrain: TerrainType) -> String:
 
 static func terrain_list() -> Array[Dictionary]:
 	return [
-		{"type": TerrainType.WATER, "name": "Water Reservoir", "desc": "Unplayable · Harbor & Warehouse must touch water", "color": TERRAIN_COLORS[TerrainType.WATER]},
-		{"type": TerrainType.MOUNTAIN, "name": "Mountain", "desc": "Unplayable · Hotel can touch mountains · Farm cannot", "color": TERRAIN_COLORS[TerrainType.MOUNTAIN]},
+		{"type": TerrainType.WATER, "name": "Lowlands / Water", "desc": "Elevation below waterline · Harbor & Warehouse must touch shore", "color": TERRAIN_COLORS[TerrainType.WATER]},
+		{"type": TerrainType.MOUNTAIN, "name": "Highlands / Peak", "desc": "Elevation above treeline · Hotel can touch peaks · Farm cannot", "color": TERRAIN_COLORS[TerrainType.MOUNTAIN]},
 		{"type": TerrainType.RUINS, "name": "Ancient Ruins", "desc": "Unplayable · Hotel can touch ruins · Farm cannot", "color": TERRAIN_COLORS[TerrainType.RUINS]},
 	]
 
@@ -1549,6 +1812,7 @@ func _initialize_grids() -> void:
 	building_ids.clear()
 	land_mask.clear()
 	terrain_cells.clear()
+	elevation_cells.clear()
 	outer_influences.clear()
 	terrain_influences.clear()
 	building_radii.clear()
@@ -1558,6 +1822,7 @@ func _initialize_grids() -> void:
 		var id_row: Array = []
 		var land_row: Array = []
 		var terrain_row: Array = []
+		var elev_row: Array = []
 		var outer_row: Array = []
 		var terrain_inf_row: Array = []
 		for x in GRID_WIDTH:
@@ -1565,23 +1830,58 @@ func _initialize_grids() -> void:
 			id_row.append(0)
 			land_row.append(true)
 			terrain_row.append(TerrainType.OPEN)
+			elev_row.append(0.5)
 			outer_row.append(_make_empty_influence_counts())
 			terrain_inf_row.append(_make_empty_terrain_influences())
 		inner_cells.append(inner_row)
 		building_ids.append(id_row)
 		land_mask.append(land_row)
 		terrain_cells.append(terrain_row)
+		elevation_cells.append(elev_row)
 		outer_influences.append(outer_row)
 		terrain_influences.append(terrain_inf_row)
 
 
-func _generate_land_mask(p_seed: int) -> void:
-	var noise := FastNoiseLite.new()
-	noise.seed = p_seed
-	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	noise.frequency = 0.085
-	noise.fractal_type = FastNoiseLite.FRACTAL_FBM
-	noise.fractal_octaves = 3
+func elevation_at(cell: Vector2i) -> float:
+	if not _is_in_bounds(cell):
+		return 0.0
+	return float(elevation_cells[cell.y][cell.x])
+
+
+## Ground surface Y in TownWorld3D units (water line ≈ 0).
+func ground_height(cell: Vector2i) -> float:
+	var e := elevation_at(cell)
+	if e < ELEV_WATER:
+		return (e - ELEV_WATER) * ELEV_WORLD_SCALE * 0.55
+	return (e - ELEV_WATER) / maxf(1.0 - ELEV_WATER, 0.001) * ELEV_WORLD_SCALE
+
+
+func elev_delta(a: Vector2i, b: Vector2i) -> float:
+	return elevation_at(a) - elevation_at(b)
+
+
+func _generate_elevation_map(p_seed: int) -> void:
+	var base := FastNoiseLite.new()
+	base.seed = p_seed
+	base.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	base.frequency = 0.055
+	base.fractal_type = FastNoiseLite.FRACTAL_FBM
+	base.fractal_octaves = 4
+
+	var detail := FastNoiseLite.new()
+	detail.seed = p_seed + 77
+	detail.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	detail.frequency = 0.14
+
+	var ridge := FastNoiseLite.new()
+	ridge.seed = p_seed + 191
+	ridge.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	ridge.frequency = 0.09
+
+	var ruins_noise := FastNoiseLite.new()
+	ruins_noise.seed = p_seed + 53
+	ruins_noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+	ruins_noise.frequency = 0.18
 
 	var center := Vector2(GRID_WIDTH * 0.5, GRID_HEIGHT * 0.5)
 	var max_dist := center.length()
@@ -1590,53 +1890,45 @@ func _generate_land_mask(p_seed: int) -> void:
 		for x in GRID_WIDTH:
 			var pos := Vector2(x + 0.5, y + 0.5)
 			var radial := 1.0 - (pos.distance_to(center) / max_dist)
-			var n := noise.get_noise_2d(float(x), float(y)) # -1..1
-			var score := radial * 1.15 + n * 0.45
-			land_mask[y][x] = score > 0.42
+			# Edges fall to ocean; interior gets hills/peaks.
+			var n := base.get_noise_2d(float(x), float(y)) * 0.55
+			n += detail.get_noise_2d(float(x), float(y)) * 0.18
+			var peak := absf(ridge.get_noise_2d(float(x), float(y)))
+			n += peak * peak * 0.35
+			var elev := clampf(radial * 0.72 + n * 0.55 + 0.18, 0.0, 1.0)
+			elevation_cells[y][x] = elev
+			land_mask[y][x] = true
 
-	_ensure_connected_landmass()
+	_sync_terrain_from_elevation()
+	# Sparse ruins only on buildable midland.
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			if terrain_cells[y][x] != TerrainType.OPEN:
+				continue
+			if ruins_noise.get_noise_2d(float(x), float(y)) > 0.64:
+				terrain_cells[y][x] = TerrainType.RUINS
+	_ensure_connected_buildable_land()
+
+
+func _sync_terrain_from_elevation() -> void:
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var e: float = float(elevation_cells[y][x])
+			if e < ELEV_WATER:
+				terrain_cells[y][x] = TerrainType.WATER
+			elif e > ELEV_MOUNTAIN:
+				terrain_cells[y][x] = TerrainType.MOUNTAIN
+			else:
+				terrain_cells[y][x] = TerrainType.OPEN
+
+
+func _generate_land_mask(_p_seed: int) -> void:
+	# Kept as no-op stub; elevation map owns island shape now.
+	pass
 
 
 func _generate_terrain_features(p_seed: int) -> void:
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			terrain_cells[y][x] = TerrainType.OPEN
-
-	var water_noise := FastNoiseLite.new()
-	water_noise.seed = p_seed + 17
-	water_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	water_noise.frequency = 0.12
-
-	var mountain_noise := FastNoiseLite.new()
-	mountain_noise.seed = p_seed + 91
-	mountain_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	mountain_noise.frequency = 0.11
-
-	var ruins_noise := FastNoiseLite.new()
-	ruins_noise.seed = p_seed + 53
-	ruins_noise.noise_type = FastNoiseLite.TYPE_CELLULAR
-	ruins_noise.frequency = 0.18
-
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			if not land_mask[y][x]:
-				continue
-			var wn := water_noise.get_noise_2d(float(x), float(y))
-			var mn := mountain_noise.get_noise_2d(float(x), float(y))
-			var rn := ruins_noise.get_noise_2d(float(x), float(y))
-
-			# Priority: water lakes, then mountains, then sparse ruins.
-			if wn > 0.48:
-				terrain_cells[y][x] = TerrainType.WATER
-			elif mn > 0.52:
-				terrain_cells[y][x] = TerrainType.MOUNTAIN
-			elif rn > 0.62:
-				terrain_cells[y][x] = TerrainType.RUINS
-
-	_grow_feature_blobs(TerrainType.WATER, 1)
-	_grow_feature_blobs(TerrainType.MOUNTAIN, 1)
-	_ensure_connected_buildable_land()
-	_fill_void_as_terrain(p_seed)
+	_generate_elevation_map(p_seed)
 
 
 func _fill_void_as_terrain(p_seed: int) -> void:
@@ -1677,6 +1969,7 @@ func _fill_void_as_terrain(p_seed: int) -> void:
 			terrain_cells[cell.y][cell.x] = TerrainType.MOUNTAIN
 		else:
 			terrain_cells[cell.y][cell.x] = TerrainType.WATER
+	_fill_void_as_terrain(p_seed)
 
 
 func _grow_feature_blobs(feature: TerrainType, passes: int) -> void:
@@ -1832,30 +2125,110 @@ func _flood_land(start: Vector2i, visited: Array) -> Array[Vector2i]:
 	return result
 
 
-func _stamp_building(start_x: int, start_y: int, building_type: BuildingType, rotated: bool) -> void:
+func _stamp_building(start_x: int, start_y: int, building_type: BuildingType, _rotated: bool) -> void:
 	if building_type == BuildingType.NONE:
 		return
+	var cell := Vector2i(start_x, start_y)
+	if not _is_buildable(cell):
+		return
 
-	var building_id := next_building_id
-	next_building_id += 1
-	var footprint := type_footprint(building_type, rotated)
-	building_radii[building_id] = mini(footprint.x, footprint.y)
+	# Roads stay per-cell (no mega-merge) so traffic/recipes stay sane.
+	if building_type == BuildingType.ROAD:
+		var road_id := next_building_id
+		next_building_id += 1
+		inner_cells[start_y][start_x] = BuildingType.ROAD
+		building_ids[start_y][start_x] = road_id
+		building_radii[road_id] = 1
+		_recalculate_outer_influences()
+		if citizen_sim != null:
+			citizen_sim.on_town_changed(cell, building_type, true)
+		if vehicle_sim != null:
+			vehicle_sim.on_town_changed(cell, building_type, true)
+		_mark_world_dirty()
+		return
 
-	for dy in footprint.y:
-		for dx in footprint.x:
-			var tx := start_x + dx
-			var ty := start_y + dy
-			if not _is_buildable(Vector2i(tx, ty)):
-				continue
-			inner_cells[ty][tx] = building_type
-			building_ids[ty][tx] = building_id
+	# Paint one cell, then union with orthogonal same-type neighbors.
+	var prev_id: int = building_ids[start_y][start_x]
+	var prev_type: BuildingType = inner_cells[start_y][start_x]
+
+	var merge_ids: Array[int] = []
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n: Vector2i = cell + d
+		if not _is_in_bounds(n):
+			continue
+		if inner_cells[n.y][n.x] != building_type:
+			continue
+		var nid: int = building_ids[n.y][n.x]
+		if nid != 0 and not merge_ids.has(nid):
+			merge_ids.append(nid)
+
+	var building_id: int
+	if merge_ids.is_empty():
+		building_id = next_building_id
+		next_building_id += 1
+	else:
+		building_id = merge_ids[0]
+		for i in range(1, merge_ids.size()):
+			_reassign_building_id(merge_ids[i], building_id)
+
+	inner_cells[start_y][start_x] = building_type
+	building_ids[start_y][start_x] = building_id
+	_refresh_building_radius(building_id, building_type)
+
+	# If we overwrote a different building, split/cleanup the old ID.
+	if prev_id != 0 and prev_id != building_id and prev_type != BuildingType.NONE:
+		if prev_type == BuildingType.ROAD or not _building_id_exists(prev_id):
+			building_radii.erase(prev_id)
+		else:
+			_split_building_components(prev_id, prev_type)
 
 	_recalculate_outer_influences()
 	if citizen_sim != null:
-		citizen_sim.on_town_changed(Vector2i(start_x, start_y), building_type, true)
+		citizen_sim.on_town_changed(cell, building_type, true)
 	if vehicle_sim != null:
-		vehicle_sim.on_town_changed(Vector2i(start_x, start_y), building_type, true)
-	queue_redraw()
+		vehicle_sim.on_town_changed(cell, building_type, true)
+	_mark_world_dirty()
+
+
+func _reassign_building_id(from_id: int, to_id: int) -> void:
+	if from_id == 0 or to_id == 0 or from_id == to_id:
+		return
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			if building_ids[y][x] == from_id:
+				building_ids[y][x] = to_id
+	building_radii.erase(from_id)
+
+
+func _refresh_building_radius(building_id: int, building_type: BuildingType) -> void:
+	var bounds := _building_bounds(building_id)
+	if bounds.size.x <= 0:
+		building_radii.erase(building_id)
+		return
+	var base := type_outer_radius(building_type)
+	var grown := maxi(base, mini(bounds.size.x, bounds.size.y))
+	building_radii[building_id] = clampi(grown, 1, 5)
+
+
+func _try_paint(cell: Vector2i) -> void:
+	if ghost_type == BuildingType.NONE:
+		return
+	if cell == last_paint_cell:
+		return
+	last_paint_cell = cell
+	if not _is_in_bounds(cell):
+		return
+	hovered_cell = cell
+	ghost_rotated = active_brush_rotated
+	if not _is_footprint_valid(cell, ghost_type, ghost_rotated):
+		ghost_valid = false
+		return
+	ghost_valid = true
+	if not paint_stroke_started:
+		_push_undo_snapshot()
+		paint_stroke_started = true
+	_stamp_building(cell.x, cell.y, ghost_type, ghost_rotated)
+	ghost_valid = _is_footprint_valid(hovered_cell, ghost_type, ghost_rotated)
 
 
 func _try_erase(cell: Vector2i) -> void:
@@ -1873,14 +2246,57 @@ func _try_erase(cell: Vector2i) -> void:
 	var erased_id: int = building_ids[cell.y][cell.x]
 	inner_cells[cell.y][cell.x] = BuildingType.NONE
 	building_ids[cell.y][cell.x] = 0
-	if erased_id != 0 and not _building_id_exists(erased_id):
-		building_radii.erase(erased_id)
+	if erased_id != 0:
+		if erased_type == BuildingType.ROAD or not _building_id_exists(erased_id):
+			building_radii.erase(erased_id)
+		else:
+			_split_building_components(erased_id, erased_type)
 	_recalculate_outer_influences()
 	if citizen_sim != null:
 		citizen_sim.on_town_changed(cell, erased_type, false)
 	if vehicle_sim != null:
 		vehicle_sim.on_town_changed(cell, erased_type, false)
-	queue_redraw()
+	_mark_world_dirty()
+
+
+func _split_building_components(building_id: int, building_type: BuildingType) -> void:
+	# After punching a hole, re-ID each orthogonal component.
+	var cells: Array[Vector2i] = []
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			if building_ids[y][x] == building_id:
+				cells.append(Vector2i(x, y))
+	if cells.is_empty():
+		building_radii.erase(building_id)
+		return
+	var visited: Dictionary = {}
+	var first := true
+	for start in cells:
+		if visited.has(start):
+			continue
+		var component: Array[Vector2i] = []
+		var stack: Array[Vector2i] = [start]
+		visited[start] = true
+		while not stack.is_empty():
+			var c: Vector2i = stack.pop_back()
+			component.append(c)
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var n: Vector2i = c + d
+				if visited.has(n):
+					continue
+				if not _is_in_bounds(n):
+					continue
+				if building_ids[n.y][n.x] != building_id:
+					continue
+				visited[n] = true
+				stack.append(n)
+		var keep_id := building_id if first else next_building_id
+		if not first:
+			next_building_id += 1
+			for c2 in component:
+				building_ids[c2.y][c2.x] = keep_id
+		first = false
+		_refresh_building_radius(keep_id, building_type)
 
 
 func _building_id_exists(building_id: int) -> bool:
@@ -2058,6 +2474,10 @@ func _grid_origin() -> Vector2:
 
 
 func _cell_from_mouse(mouse_position: Vector2) -> Vector2i:
+	if town_world != null and _world_viewport != null:
+		var cell: Vector2i = town_world.screen_to_cell(mouse_position, Vector2(_world_viewport.size))
+		if cell.x >= 0:
+			return cell
 	var world := _screen_to_world(mouse_position)
 	var local := world - _grid_origin()
 	return Vector2i(floori(local.x / _cell_size), floori(local.y / _row_height()))
@@ -2207,73 +2627,6 @@ func _make_empty_terrain_influences() -> Dictionary:
 	return flags
 
 
-func _draw_ghost_preview(origin: Vector2) -> void:
-	if ghost_type == BuildingType.NONE or not _is_in_bounds(hovered_cell):
-		return
-
-	var footprint := type_footprint(ghost_type, ghost_rotated)
-	var radius := type_outer_radius(ghost_type, ghost_rotated)
-	var valid_mod := Color(1, 1, 1, 0.55)
-	var invalid_mod := Color(1, 0.35, 0.35, 0.5)
-	var outer_mod := Color(1, 1, 1, 0.28) if ghost_valid else Color(1, 0.35, 0.35, 0.22)
-
-	for dy in range(-radius, footprint.y + radius):
-		for dx in range(-radius, footprint.x + radius):
-			var tx := hovered_cell.x + dx
-			var ty := hovered_cell.y + dy
-			var cell := Vector2i(tx, ty)
-			if not _is_in_bounds(cell):
-				continue
-
-			var is_inner := dx >= 0 and dx < footprint.x and dy >= 0 and dy < footprint.y
-			var dist := _chebyshev_to_rect(tx, ty, hovered_cell, footprint)
-			if not is_inner and dist > radius:
-				continue
-			if not is_inner and not _is_buildable(cell):
-				continue
-
-			var cell_rect := _ground_rect(tx, ty, origin)
-			if is_inner:
-				if ghost_type == BuildingType.ROAD:
-					_draw_tile_world(
-						cell_rect,
-						TileLibrary.road_auto_tex(_road_mask(cell)),
-						cell,
-						valid_mod if ghost_valid else invalid_mod
-					)
-				else:
-					_draw_tile_world(
-						cell_rect,
-						TileLibrary.sidewalk_tex((tx + ty) % 2),
-						cell,
-						valid_mod if ghost_valid else invalid_mod
-					)
-			else:
-				_draw_tile_world(cell_rect, TileLibrary.influence_tex(ghost_type), cell, outer_mod)
-
-			var border_alpha := (0.9 if is_inner else 0.45)
-			var border_color := Color(1, 1, 1, border_alpha) if ghost_valid else Color(1, 0.3, 0.3, border_alpha)
-			var screen_rect := _world_to_screen_rect(cell_rect)
-			draw_rect(screen_rect, Color(0, 0, 0, border_alpha), false, 3.0 if is_inner else 2.0)
-			draw_rect(screen_rect, border_color, false, 2.0 if is_inner else 1.0)
-
-	# One ghost facade spanning the footprint (matches placed buildings).
-	if ghost_type != BuildingType.ROAD:
-		var bounds := Rect2i(hovered_cell.x, hovered_cell.y, footprint.x, footprint.y)
-		var facade := _facade_rect(bounds, _building_height_factor(ghost_type), origin)
-		_draw_tile_world(
-			facade,
-			TileLibrary.building_tex(ghost_type, _tile_anim_frame % TileLibrary.building_frame_count(ghost_type)),
-			hovered_cell,
-			valid_mod if ghost_valid else invalid_mod
-		)
-
-	if gamepad_active and _is_in_bounds(hovered_cell):
-		var cursor_rect := _world_to_screen_rect(_ground_rect(hovered_cell.x, hovered_cell.y, origin))
-		draw_rect(cursor_rect, Color(0, 0, 0, 0.9), false, 4.0)
-		draw_rect(cursor_rect, Color(1, 1, 1, 1), false, 2.0)
-
-
 func _chebyshev_to_rect(tx: int, ty: int, start: Vector2i, footprint: Vector2i) -> int:
 	var clamped_x := clampi(tx, start.x, start.x + footprint.x - 1)
 	var clamped_y := clampi(ty, start.y, start.y + footprint.y - 1)
@@ -2281,10 +2634,6 @@ func _chebyshev_to_rect(tx: int, ty: int, start: Vector2i, footprint: Vector2i) 
 
 
 func _update_hover_tooltip(mouse_position: Vector2) -> void:
-	if get_viewport().gui_is_dragging():
-		tooltip_text = ""
-		return
-
 	var cell := _cell_from_mouse(mouse_position)
 	if cell == hover_info_cell:
 		return
@@ -2355,6 +2704,8 @@ func _restore_state(snapshot: Dictionary) -> void:
 	building_radii = (snapshot["radii"] as Dictionary).duplicate()
 	next_building_id = snapshot["next_id"]
 	_recalculate_outer_influences()
+	if citizen_sim != null:
+		citizen_sim.clear()
 	if citizen_sim != null:
 		citizen_sim.clear()
 	if vehicle_sim != null:

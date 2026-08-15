@@ -7,13 +7,13 @@ const STICK_DEADZONE := 0.45
 const STICK_INITIAL_DELAY := 0.28
 const STICK_REPEAT_DELAY := 0.1
 
-const PROMPT_KEYBOARD := "WASD/Arrows move · Space/Enter place · Del erase · R rotate · Wheel/+- zoom · MMB pan · Q/E building · C clear · N new map · Ctrl+Z/Y undo/redo"
-const PROMPT_GAMEPAD_XBOX := "Stick/D-pad move · LT/RT zoom · Right stick pan · LB/RB building · A place · X erase · Y rotate · Back clear · Start new map"
-const PROMPT_GAMEPAD_SONY := "Stick/D-pad move · L2/R2 zoom · Right stick pan · L1/R1 building · ✕ place · □ erase · △ rotate · Create clear · Options new map"
+const PROMPT_KEYBOARD := "WASD/Arrows move · Space/Enter place · Del erase · R rotate brush · [ ] orbit view · Wheel/+- zoom · MMB pan · Q/E building · C clear · N new map · Ctrl+Z/Y undo"
+const PROMPT_GAMEPAD_XBOX := "Stick/D-pad move · LT/RT zoom · Right stick pan · L3/R3 orbit · LB/RB building · A place · X erase · Y rotate · Back clear · Start new map"
+const PROMPT_GAMEPAD_SONY := "Stick/D-pad move · L2/R2 zoom · Right stick pan · L3/R3 orbit · L1/R1 building · ✕ place · □ erase · △ rotate · Create clear · Options new map"
 
-const BOTTOM_PROMPT_KEYBOARD := "Buildings  ·  drag onto board  ·  Wheel/+- zoom  ·  MMB pan  ·  R / Q-E"
-const BOTTOM_PROMPT_GAMEPAD_XBOX := "Buildings  ·  LB/RB select  ·  LT/RT zoom  ·  A place  ·  Y rotate"
-const BOTTOM_PROMPT_GAMEPAD_SONY := "Buildings  ·  L1/R1 select  ·  L2/R2 zoom  ·  ✕ place  ·  △ rotate"
+const BOTTOM_PROMPT_KEYBOARD := "Buildings  ·  drag onto board  ·  [ ] orbit  ·  Wheel/+- zoom  ·  MMB pan  ·  R / Q-E"
+const BOTTOM_PROMPT_GAMEPAD_XBOX := "Buildings  ·  L3/R3 orbit  ·  LB/RB select  ·  LT/RT zoom  ·  A place  ·  Y rotate"
+const BOTTOM_PROMPT_GAMEPAD_SONY := "Buildings  ·  L3/R3 orbit  ·  L1/R1 select  ·  L2/R2 zoom  ·  ✕ place  ·  △ rotate"
 
 enum InputMode {
 	KEYBOARD_MOUSE,
@@ -121,6 +121,10 @@ func _poll_camera_controls(delta: float) -> void:
 	var pan := input_bindings.get_pan_vector()
 	if pan.length_squared() > 0.01 and board.view_zoom > 1.001:
 		board.pan_by(pan * delta * 420.0)
+	if Input.is_action_just_pressed(InputBindings.ACTION_VIEW_CCW):
+		board.rotate_view_yaw(-1)
+	if Input.is_action_just_pressed(InputBindings.ACTION_VIEW_CW):
+		board.rotate_view_yaw(1)
 
 
 func _build_palette() -> void:

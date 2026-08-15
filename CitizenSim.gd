@@ -39,38 +39,84 @@ func clear() -> void:
 	citizens.clear()
 
 
-func tick(delta: float) -> void:
+func tick(delta: float) -> bool:
 	if board == null:
-		return
+		return false
+	var changed := false
 	_chatter_cooldown = maxf(0.0, _chatter_cooldown - delta)
+	var before := citizens.size()
 	_cull_orphans()
+	if citizens.size() != before:
+		changed = true
+	var count_before_spawn := citizens.size()
 	_maybe_spawn_from_homes()
+	if citizens.size() != count_before_spawn:
+		changed = true
 	_react_to_day_phase()
 
 	var night := board.is_night()
 	for citizen in citizens:
+		var had_emote := not str(citizen.get("emote", "")).is_empty()
 		citizen["emote_timer"] = float(citizen.get("emote_timer", 0.0)) - delta
 		if float(citizen["emote_timer"]) <= 0.0:
 			citizen["emote"] = ""
-		citizen["step_timer"] = float(citizen.get("step_timer", 0.0)) - delta
+			if had_emote:
+				changed = true
 		_update_mood(citizen)
+
+		# Inside a building: wait, then exit through the door.
+		if bool(citizen.get("inside", false)):
+			citizen["inside_timer"] = float(citizen.get("inside_timer", 0.0)) - delta
+			if float(citizen["inside_timer"]) <= 0.0:
+				_exit_building(citizen)
+				changed = true
+			continue
+
+		# Glide visual toward logical cell (Beat Cop continuous walk, not teleports).
+		if _update_visual(citizen, delta, 1.0 / STEP_INTERVAL):
+			changed = true
+
+		var visual: Vector2 = citizen.get("visual", Vector2(citizen["cell"]))
+		var at_cell := visual.distance_to(Vector2(citizen["cell"])) < 0.04
+		if not at_cell:
+			continue
+
+		citizen["step_timer"] = float(citizen.get("step_timer", 0.0)) - delta
 		if float(citizen["step_timer"]) > 0.0:
 			continue
-		# Night: linger / sleep near homes; day keeps normal pace.
 		var pace := STEP_INTERVAL * (1.55 if night else 1.0)
 		if night and _near_home(citizen) and _rng.randf() < 0.55:
 			_set_emote(citizen, "sleep")
 			citizen["step_timer"] = pace * _rng.randf_range(1.2, 2.0)
+			citizen["walk_frame"] = 0
+			changed = true
 			continue
 		citizen["step_timer"] = pace * _rng.randf_range(0.75, 1.2)
 		_step_citizen(citizen)
-		citizen["walk_frame"] = (int(citizen.get("walk_frame", 0)) + 1) % TileLibrary.WALK_FRAMES
 
 	var i := citizens.size() - 1
 	while i >= 0:
 		if bool(citizens[i].get("remove", false)):
 			citizens.remove_at(i)
+			changed = true
 		i -= 1
+	return changed
+
+
+func _update_visual(actor: Dictionary, delta: float, cells_per_sec: float) -> bool:
+	var target := Vector2(actor["cell"])
+	var visual: Vector2 = actor.get("visual", target)
+	if visual.distance_to(target) < 0.001:
+		actor["visual"] = target
+		return false
+	var prev := visual
+	actor["visual"] = visual.move_toward(target, cells_per_sec * delta)
+	var moved := prev.distance_to(actor["visual"])
+	actor["walk_accum"] = float(actor.get("walk_accum", 0.0)) + moved
+	if float(actor["walk_accum"]) >= 0.16:
+		actor["walk_accum"] = 0.0
+		actor["walk_frame"] = (int(actor.get("walk_frame", 0)) + 1) % TileLibrary.WALK_FRAMES
+	return true
 
 
 func on_town_changed(cell: Vector2i, building_type: Board.BuildingType, placed: bool) -> void:
@@ -176,6 +222,7 @@ func get_town_mood_report() -> Dictionary:
 	}
 
 
+## Snapshot for HUD: count, capacity, overall mood label / emote / color.
 func _maybe_spawn_from_homes() -> void:
 	if citizens.size() >= MAX_CITIZENS:
 		return
@@ -183,7 +230,7 @@ func _maybe_spawn_from_homes() -> void:
 	var homes := _count_buildings(Board.BuildingType.RESIDENTIAL)
 	var hotels := _count_buildings(Board.BuildingType.HOTEL)
 	var downtown := _count_buildings(Board.BuildingType.DOWNTOWN)
-	var capacity := mini(MAX_CITIZENS, homes * 2 + hotels + downtown / 2)
+	var capacity := mini(MAX_CITIZENS, homes * 2 + hotels + int(downtown / 2.0))
 	if citizens.size() >= capacity:
 		return
 	var spawn_chance := 0.08
@@ -210,6 +257,9 @@ func _spawn_near(anchor: Vector2i, count: int) -> void:
 			return
 		citizens.append({
 			"cell": spot,
+			"visual": Vector2(spot),
+			"walk_accum": 0.0,
+			"outfit": _rng.randi_range(0, TileLibrary.CITIZEN_OUTFITS - 1),
 			"target": spot,
 			"dir": DIR_DOWN,
 			"walk_frame": 0,
@@ -218,6 +268,10 @@ func _spawn_near(anchor: Vector2i, count: int) -> void:
 			"emote_timer": 0.0,
 			"step_timer": _rng.randf_range(0.0, STEP_INTERVAL),
 			"home": anchor,
+			"inside": false,
+			"inside_timer": 0.0,
+			"enter_building_id": 0,
+			"remove": false,
 		})
 
 
@@ -329,12 +383,51 @@ func _step_citizen(citizen: Dictionary) -> void:
 		_step_toward(citizen, citizen["target"])
 		return
 
+	var enter_id: int = int(citizen.get("enter_building_id", 0))
+	if enter_id > 0:
+		var approach := board.building_approach_cell(enter_id)
+		if approach.x >= 0:
+			citizen["target"] = approach
+			if cell == approach:
+				_enter_building(citizen, enter_id)
+				return
+			_step_toward(citizen, approach)
+			return
+		citizen["enter_building_id"] = 0
+
 	var target: Vector2i = citizen["target"]
 	if target == cell or not _is_walkable(target) or _rng.randf() < 0.12:
 		target = _pick_target(citizen)
 		citizen["target"] = target
 
 	_step_toward(citizen, target)
+
+
+func _enter_building(citizen: Dictionary, building_id: int) -> void:
+	board.open_door(building_id, 1.25)
+	citizen["inside"] = true
+	citizen["inside_timer"] = _rng.randf_range(2.5, 7.0)
+	citizen["enter_building_id"] = building_id
+	citizen["walk_frame"] = 0
+	_set_emote(citizen, "cheer")
+	if _chatter_cooldown <= 0.0 and _rng.randf() < 0.2:
+		_chatter_cooldown = 4.5
+		chatter.emit("Someone ducked into a doorway.")
+
+
+func _exit_building(citizen: Dictionary) -> void:
+	var building_id: int = int(citizen.get("enter_building_id", 0))
+	if building_id > 0:
+		board.open_door(building_id, 1.1)
+		var approach := board.building_approach_cell(building_id)
+		if approach.x >= 0:
+			citizen["cell"] = approach
+			citizen["visual"] = Vector2(approach)
+	citizen["inside"] = false
+	citizen["inside_timer"] = 0.0
+	citizen["enter_building_id"] = 0
+	citizen["target"] = _pick_target(citizen)
+	citizen["step_timer"] = 0.2
 
 
 func _pick_target(citizen: Dictionary) -> Vector2i:
@@ -386,22 +479,53 @@ func _pick_target(citizen: Dictionary) -> Vector2i:
 					Board.BuildingType.MARKET,
 					Board.BuildingType.SCHOOL,
 					Board.BuildingType.OFFICE,
+					Board.BuildingType.HOTEL,
+					Board.BuildingType.DOWNTOWN,
 				])
 
 	for building_type in goals:
-		var goal_cell := _random_building_cell(building_type)
-		if goal_cell.x < 0:
+		if building_type == Board.BuildingType.ROAD or building_type == Board.BuildingType.PARK:
+			var goal_cell := _random_building_cell(building_type)
+			if goal_cell.x < 0:
+				continue
+			var near := _find_spawn_cell(goal_cell)
+			if near.x >= 0:
+				citizen["enter_building_id"] = 0
+				return near
 			continue
-		var near := _find_spawn_cell(goal_cell)
-		if near.x >= 0:
-			return near
+		# Enterable destinations: walk to the door approach, then go inside.
+		var bid := _random_building_id(building_type)
+		if bid <= 0:
+			continue
+		var approach := board.building_approach_cell(bid)
+		if approach.x >= 0:
+			citizen["enter_building_id"] = bid
+			return approach
 
+	citizen["enter_building_id"] = 0
 	# Random roam nearby.
 	for _try in 12:
 		var cand := cell + Vector2i(_rng.randi_range(-5, 5), _rng.randi_range(-5, 5))
 		if _is_walkable(cand):
 			return cand
 	return cell
+
+
+func _random_building_id(building_type: Board.BuildingType) -> int:
+	var ids: Array[int] = []
+	var seen: Dictionary = {}
+	for y in Board.GRID_HEIGHT:
+		for x in Board.GRID_WIDTH:
+			if board.inner_cells[y][x] != building_type:
+				continue
+			var id: int = board.building_ids[y][x]
+			if id == 0 or seen.has(id):
+				continue
+			seen[id] = true
+			ids.append(id)
+	if ids.is_empty():
+		return 0
+	return ids[_rng.randi_range(0, ids.size() - 1)]
 
 
 func _step_toward(citizen: Dictionary, target: Vector2i) -> void:
@@ -469,6 +593,10 @@ func _occupied(cell: Vector2i, except: Dictionary = {}) -> bool:
 			continue
 		if citizen["cell"] == cell:
 			return true
+	if board.vehicle_sim != null:
+		for vehicle in board.vehicle_sim.vehicles:
+			if vehicle["cell"] == cell:
+				return true
 	return false
 
 

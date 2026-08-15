@@ -377,3 +377,46 @@ static func _stall(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void
 	canvas.draw_line(c + Vector2(-s * 0.18, s * 0.02), c + Vector2(-s * 0.18, s * 0.18), ink, 1.4)
 	canvas.draw_line(c + Vector2(s * 0.18, s * 0.02), c + Vector2(s * 0.18, s * 0.18), ink, 1.4)
 	canvas.draw_line(c + Vector2(-s * 0.2, s * 0.18), c + Vector2(s * 0.2, s * 0.18), ink, 1.4)
+
+
+static func _crates(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	canvas.draw_rect(Rect2(c + Vector2(-s * 0.22, -s * 0.02), Vector2(s * 0.18, s * 0.18)), ink, false, 1.3)
+	canvas.draw_rect(Rect2(c + Vector2(0.0, -s * 0.12), Vector2(s * 0.18, s * 0.18)), ink, false, 1.3)
+	canvas.draw_rect(Rect2(c + Vector2(s * 0.04, s * 0.04), Vector2(s * 0.18, s * 0.16)), ink, false, 1.3)
+
+
+static func _promenade(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	_boardwalk(canvas, c + Vector2(0, s * 0.08), s * 0.85, ink)
+	_tree(canvas, c + Vector2(0, -s * 0.12), s * 0.12, ink)
+
+
+static func _event_lot(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	for i in 3:
+		var y := -s * 0.16 + i * s * 0.14
+		canvas.draw_line(c + Vector2(-s * 0.22, y), c + Vector2(s * 0.22, y), ink, 1.4)
+		canvas.draw_rect(Rect2(c + Vector2(-s * 0.1, y - s * 0.05), Vector2(s * 0.2, s * 0.08)), ink, false, 1.1)
+
+
+static func _siren(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	_cross(canvas, c + Vector2(0, s * 0.04), s * 0.14, ink)
+	canvas.draw_arc(c + Vector2(0, -s * 0.12), s * 0.12, PI * 1.15, PI * 1.85, 6, ink, 1.4)
+
+
+static func _sports_field(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	canvas.draw_rect(Rect2(c + Vector2(-s * 0.24, -s * 0.16), Vector2(s * 0.48, s * 0.32)), ink, false, 1.4)
+	canvas.draw_line(c + Vector2(0, -s * 0.16), c + Vector2(0, s * 0.16), ink, 1.2)
+	canvas.draw_circle(c, s * 0.07, ink, false, 1.2)
+
+
+static func _loading(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	canvas.draw_rect(Rect2(c + Vector2(-s * 0.24, -s * 0.1), Vector2(s * 0.28, s * 0.22)), ink, false, 1.4)
+	canvas.draw_line(c + Vector2(s * 0.04, 0), c + Vector2(s * 0.24, 0), ink, 1.6)
+	canvas.draw_line(c + Vector2(s * 0.24, 0), c + Vector2(s * 0.16, -s * 0.08), ink, 1.4)
+	canvas.draw_line(c + Vector2(s * 0.24, 0), c + Vector2(s * 0.16, s * 0.08), ink, 1.4)
+
+
+static func _stall(canvas: CanvasItem, c: Vector2, s: float, ink: Color) -> void:
+	_awning(canvas, c + Vector2(0, -s * 0.06), s * 0.85, ink)
+	canvas.draw_line(c + Vector2(-s * 0.18, s * 0.02), c + Vector2(-s * 0.18, s * 0.18), ink, 1.4)
+	canvas.draw_line(c + Vector2(s * 0.18, s * 0.02), c + Vector2(s * 0.18, s * 0.18), ink, 1.4)
+	canvas.draw_line(c + Vector2(-s * 0.2, s * 0.18), c + Vector2(s * 0.2, s * 0.18), ink, 1.4)
